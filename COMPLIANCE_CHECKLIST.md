@@ -18,5 +18,5 @@ Status reflects implementation and verification completed in this workspace on 2
 | Docker and GitHub Actions | Implemented, not runtime-verified | Files are present; Docker daemon was unavailable in this environment |
 | README and demo credentials | Implemented | [README.md](./README.md) |
 | Three reproduced bugs with fixes | Documented | [DEBUG_LOG.md](./DEBUG_LOG.md) |
-| Public GitHub repository | Pending | Local repository contents need final secret review before publish |
+| Public GitHub repository | Published | https://github.com/Md-Emon-Hasan/hris-systems-developer-assessment |
 | Public Vercel deployment | Pending | Requires configured Vercel access and a live PostgreSQL/Supabase database; no deployment URL is available |

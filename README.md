@@ -10,7 +10,7 @@ This repository is an implementation in progress. Architecture, database schema,
 
 - Next.js App Router, React, TypeScript strict mode, Tailwind CSS, Lucide, Recharts
 - TanStack Query; Zod validation
-- Prisma ORM with SQLite for local development; PostgreSQL schema/migrations are planned separately
+- Prisma ORM with SQLite for local development; PostgreSQL schema/migrations are maintained separately
 - Argon2id password hashing; database-backed opaque sessions in HTTP-only cookies
 - Groq API integration for HR Smart Query answers, with live database results and a fallback
 - Vitest and Playwright dependencies for unit and browser coverage
