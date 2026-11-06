@@ -1,0 +1,58 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { getCurrentUser } from "@/lib/auth/session";
+import { apiError } from "@/lib/auth/permissions";
+import { prisma } from "@/lib/db/prisma";
+
+const assignSchema = z.object({ employeeId: z.string(), templateId: z.string(), startDate: z.iso.date() });
+
+export async function GET(request: Request) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Sign in required." } }, { status: 401 });
+    const onlyMyTasks = new URL(request.url).searchParams.get("myTasks") === "true";
+    const scope = user.role === "HR_ADMIN" ? {} : user.role === "MANAGER" ? { OR: [{ employee: { managerId: user.id } }, { tasks: { some: { ownerId: user.id } } }] } : { OR: [{ employeeId: user.id }, { tasks: { some: { ownerId: user.id } } }] };
+    const records = await prisma.onboarding.findMany({
+      where: { ...scope, status: "IN_PROGRESS", ...(onlyMyTasks && user.role !== "HR_ADMIN" ? { tasks: { some: { ownerId: user.id } } } : {}) },
+      include: { employee: { select: { id: true, fullName: true, country: true, department: true, joiningDate: true, managerId: true } }, template: { select: { id: true, name: true } }, tasks: { include: { owner: { select: { id: true, fullName: true } }, dependsOn: { select: { id: true, title: true, status: true } } }, orderBy: { dueDate: "asc" } } }, orderBy: { startDate: "desc" },
+    });
+    const data = records.map((r) => {
+      const ownOnly = onlyMyTasks || user.role === "EMPLOYEE" || (user.role === "MANAGER" && r.employee.managerId !== user.id);
+      return { ...r, tasks: ownOnly ? r.tasks.filter((t) => t.ownerId === user.id) : r.tasks };
+    });
+    return NextResponse.json({ data });
+  } catch (error) { return apiError(error); }
+}
+
+export async function POST(request: Request) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Sign in required." } }, { status: 401 });
+    if (user.role !== "HR_ADMIN") return NextResponse.json({ error: { code: "FORBIDDEN", message: "HR Admin access required." } }, { status: 403 });
+    const parsed = assignSchema.safeParse(await request.json());
+    if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Choose an employee, template, and valid start date." } }, { status: 400 });
+    const { employeeId, templateId, startDate } = parsed.data;
+    const [employee, template, existing] = await Promise.all([
+      prisma.user.findUnique({ where: { id: employeeId }, select: { id: true, role: true, employmentStatus: true } }),
+      prisma.onboardingTemplate.findUnique({ where: { id: templateId }, include: { tasks: { orderBy: { sortOrder: "asc" } } } }),
+      prisma.onboarding.findFirst({ where: { employeeId, status: "IN_PROGRESS" } }),
+    ]);
+    if (!employee || employee.role === "HR_ADMIN" || employee.employmentStatus === "INACTIVE" || !template?.active) return NextResponse.json({ error: { code: "NOT_FOUND", message: "Active employee or template not found." } }, { status: 404 });
+    if (existing) return NextResponse.json({ error: { code: "ALREADY_ASSIGNED", message: "This employee already has an active onboarding." } }, { status: 409 });
+    const start = new Date(`${startDate}T00:00:00.000Z`);
+    const instance = await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: employeeId }, data: { joiningDate: start } });
+      const created = await tx.onboarding.create({ data: { employeeId, templateId, createdById: user.id, startDate: start, tasks: { create: template.tasks.map((task) => ({
+        templateTaskId: task.id, title: task.title, description: task.description, department: task.department, dueOffsetDays: task.dueOffsetDays,
+        dueDate: new Date(start.getTime() + task.dueOffsetDays * 86400000), ownerId: null, status: "NOT_STARTED",
+      })) } }, include: { tasks: true } });
+      const taskBySource = new Map(created.tasks.map((t) => [t.templateTaskId, t.id]));
+      for (const task of template.tasks) if (task.dependsOnId) {
+        const dependsOnId = taskBySource.get(task.dependsOnId);
+        if (dependsOnId) await tx.onboardingTask.update({ where: { id: taskBySource.get(task.id)! }, data: { dependsOnId } });
+      }
+      return tx.onboarding.findUnique({ where: { id: created.id }, include: { tasks: true } });
+    });
+    return NextResponse.json({ data: instance }, { status: 201 });
+  } catch (error) { return apiError(error); }
+}
