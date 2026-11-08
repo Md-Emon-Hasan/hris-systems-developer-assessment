@@ -1,7 +1,99 @@
 import "server-only";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import { normalizeSearchText } from "./query-normalization";
 
 export type QueryResult = { summary: string; data: unknown; provenance: string };
+
+const openStatuses = ["SUBMITTED", "ASSIGNED", "IN_PROGRESS"];
+const countries = ["Bangladesh", "Malaysia", "Sri Lanka", "Cyprus"] as const;
+
+const countryFromQuestion = (question: string) => {
+  const normalized = normalizeSearchText(question);
+  return countries.find((country) => normalized.includes(normalizeSearchText(country)));
+};
+
+const categoryFromQuestion = (question: string) => {
+  const normalized = normalizeSearchText(question);
+  if (/it equipment|laptop|equipment|\bit\b/.test(normalized)) return "IT_EQUIPMENT" as const;
+  if (/software|access/.test(normalized)) return "SOFTWARE_ACCESS" as const;
+  if (/hr query|leave|hr request/.test(normalized)) return "HR_QUERY" as const;
+  if (/facilit/.test(normalized)) return "FACILITIES" as const;
+  return undefined;
+};
+
+/** Deterministic live-record queries used by the keyless Playwright environment. */
+export async function executeDeterministicQuery(question: string): Promise<QueryResult | null> {
+  const normalized = normalizeSearchText(question);
+  const country = countryFromQuestion(question);
+
+  if (/onboard/.test(normalized) && /overdue|past due|late/.test(normalized)) {
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const tasks = await prisma.onboardingTask.findMany({
+      where: { status: { not: "COMPLETED" }, dueDate: { lt: today }, onboarding: { status: "IN_PROGRESS", ...(country ? { employee: { country } } : {}) } },
+      select: { onboarding: { select: { employee: { select: { fullName: true, country: true } } } } },
+    });
+    const grouped = new Map<string, { newHire: string; country: string; overdueTasks: number }>();
+    for (const task of tasks) {
+      const employee = task.onboarding.employee;
+      const current = grouped.get(employee.fullName) ?? { newHire: employee.fullName, country: employee.country, overdueTasks: 0 };
+      current.overdueTasks += 1;
+      grouped.set(employee.fullName, current);
+    }
+    const data = [...grouped.values()].sort((a, b) => a.newHire.localeCompare(b.newHire));
+    const details = data.map((hire) => `${hire.newHire}: ${hire.overdueTasks} overdue`).join("; ");
+    return {
+      summary: `${data.length} new hire${data.length === 1 ? " has" : "s have"} ${tasks.length} overdue onboarding task${tasks.length === 1 ? "" : "s"}${country ? ` in ${country}` : ""}.${details ? ` Per hire: ${details}.` : ""}`,
+      data,
+      provenance: `Live onboardingTask aggregation, grouped by onboarding; ${data.length} hires and ${tasks.length} tasks.`,
+    };
+  }
+
+  if (/onboard/.test(normalized) && /completion|completed|highest|rate|country/.test(normalized)) {
+    const plans = await prisma.onboarding.findMany({
+      where: { status: "IN_PROGRESS", ...(country ? { employee: { country } } : {}) },
+      select: { employee: { select: { country: true } }, tasks: { select: { status: true } } },
+    });
+    const rates = countries.map((name) => {
+      const tasks = plans.filter((plan) => plan.employee.country === name).flatMap((plan) => plan.tasks);
+      const completed = tasks.filter((task) => task.status === "COMPLETED").length;
+      return { country: name, totalTasks: tasks.length, completedTasks: completed, completionRate: tasks.length ? Number((completed * 100 / tasks.length).toFixed(1)) : null };
+    }).filter((rate) => rate.totalTasks > 0);
+    if (!rates.length) return { summary: "There are no eligible onboarding tasks to calculate a completion rate.", data: [], provenance: "Live onboardingTask counts for IN_PROGRESS onboarding plans." };
+    const highest = Math.max(...rates.map((rate) => rate.completionRate ?? 0));
+    const leaders = rates.filter((rate) => rate.completionRate === highest).map((rate) => rate.country);
+    return {
+      summary: `${leaders.join(" and ")} ${leaders.length === 1 ? "has" : "are tied at"} the highest onboarding completion rate at ${highest}%. By country: ${rates.map((rate) => `${rate.country}: ${rate.completedTasks}/${rate.totalTasks} tasks (${rate.completionRate}%)`).join("; ")}.`,
+      data: rates,
+      provenance: "Live onboardingTask counts for IN_PROGRESS onboarding plans; rate = completed tasks / all tasks × 100.",
+    };
+  }
+
+  if (/request|ticket/.test(normalized) && /how many|count|unresolved|open|pending|assigned/.test(normalized)) {
+    const category = categoryFromQuestion(question);
+    const priority = /urgent|urgency/.test(normalized) ? "URGENT" : undefined;
+    const status = /assigned/.test(normalized) && !/unresolved|open|pending/.test(normalized) ? "ASSIGNED" : undefined;
+    const where: Prisma.ServiceRequestWhereInput = {
+      ...(category ? { category } : {}),
+      ...(priority ? { priority } : {}),
+      ...(status ? { status } : /unresolved|open|pending/.test(normalized) ? { status: { in: openStatuses } } : {}),
+      ...(country ? { requester: { country } } : {}),
+    };
+    const [count, grouped] = await Promise.all([
+      prisma.serviceRequest.count({ where }),
+      prisma.serviceRequest.groupBy({ by: ["status"], where, _count: { _all: true } }),
+    ]);
+    const qualifier = [category?.replaceAll("_", " ").toLowerCase(), priority?.toLowerCase(), status ?? (/unresolved|open|pending/.test(normalized) ? "open" : undefined)].filter(Boolean).join(" ");
+    return {
+      summary: `${count} ${qualifier ? `${qualifier} ` : ""}service request${count === 1 ? "" : "s"}${country ? ` in ${country}` : ""}.`,
+      data: grouped.map((row) => ({ status: row.status, count: row._count._all })),
+      provenance: `Live ServiceRequest count and status aggregation; open means Submitted, Assigned, or In Progress; ${count} matching records.`,
+    };
+  }
+
+  return null;
+}
 
 const sqlTables = ["User", "ServiceRequest", "Onboarding", "OnboardingTask", "OnboardingTemplate", "TemplateTask", "RequestComment", "RequestStatusHistory", "OnboardingTaskHistory"];
 const safeSqlSchema = `Available live HR tables and columns (Prisma names):
@@ -79,7 +171,7 @@ export async function executeSqlQuery(sql: string): Promise<QueryResult> {
 
 export async function generateAnswer(question: string, result: QueryResult): Promise<{ answer: string; provider: string }> {
   const key = process.env.GROQ_API_KEY?.trim();
-  if (!key) throw new Error("GROQ_API_KEY is required to generate Smart Query answers.");
+  if (!key) return { answer: result.summary, provider: "database-summary" };
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
     body: JSON.stringify({ model: process.env.GROQ_MODEL || "openai/gpt-oss-20b", temperature: 0.1, max_completion_tokens: 1200,

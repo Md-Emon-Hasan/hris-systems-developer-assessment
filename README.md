@@ -6,13 +6,48 @@ Next Ventures is an HR operations platform for employee service requests and str
 
 ## Contents
 
+- [Technology stack](#technology-stack)
+- [Project file structure](#project-file-structure)
 - [Assessment submission status](#assessment-submission-status)
 - [Run locally](#run-locally)
 - [Demo accounts](#demo-accounts)
 - [Included assessment data](#included-assessment-data)
 - [Workflows and access](#workflows-and-access)
 - [Environment variables](#environment-variables)
+- [Supabase and Vercel deployment](#supabase-and-vercel-deployment)
 - [Further documentation](#further-documentation)
+
+## Technology stack
+
+| Area | Technology |
+|---|---|
+| Frontend and server | Next.js App Router, React, TypeScript |
+| UI and data | Tailwind CSS, TanStack Query, React Hook Form, Recharts |
+| API and validation | Next.js Route Handlers, Zod |
+| Authentication | Argon2id password hashing and HTTP-only sessions |
+| Database | Prisma; SQLite locally and Supabase PostgreSQL in production |
+| AI | Groq API for Smart Query |
+| Hosting | Vercel |
+| Quality tools | Vitest, Playwright, ESLint, TypeScript |
+
+## Project file structure
+
+```text
+├── src/
+│   ├── app/                    Pages, layout, providers, and API routes
+│   ├── components/             Workspace, login, and shared UI
+│   └── lib/
+│       ├── ai/                 Smart Query
+│       ├── auth/               Sessions and permissions
+│       ├── db/                 Prisma client
+│       ├── domains/            Workflow rules and unit tests
+│       ├── security/           Rate limiting
+│       └── validation/         Zod schemas
+├── prisma/                     SQLite/PostgreSQL schemas, migrations, seed
+├── scripts/                    Database setup and seed verification
+├── e2e/                        Playwright end-to-end tests
+└── .github/workflows/          CI workflow
+```
 
 ## Assessment submission status
 
@@ -20,6 +55,10 @@ Next Ventures is an HR operations platform for employee service requests and str
 - **Live platform URL:** [https://hris-systems-developer-assessment.vercel.app](https://hris-systems-developer-assessment.vercel.app)
 - **Hosting and database:** Vercel with Supabase PostgreSQL. The PostgreSQL migration and assessment seed have been applied and verified.
 - **Seed verification:** 109 accounts (100 Employees, 8 Managers, 1 HR Admin), 36 requests, and 7 onboarding plans; `npm run verify:seed:postgres` passes against the hosted database.
+
+> **Live demo note:** The app uses free-tier hosting and database services, so database writes may take a few seconds. After clicking an action, please wait briefly for it to finish.
+
+> **Smart Query note:** The assessment demo uses a Groq-hosted model, which may return inaccurate answers. For production, we plan to evaluate OpenAI or Anthropic Claude models, which may improve answer quality; results should be checked against representative HR queries before making an accuracy claim.
 
 ## Run locally
 
@@ -58,9 +97,7 @@ The seed creates 109 user accounts: 100 Employee-role users, 8 Managers, and 1 H
 - **Manager:** handle in-scope team requests; monitor direct reports; act only on tasks assigned to them.
 - **HR Admin:** manage people, requests, checklist templates, and onboarding assignments; see organization-wide dashboards; ask Smart Query questions.
 
-Request and task transitions are validated by the server and recorded in history. Smart Query is an HR Admin-only natural-language-to-SQL feature: Groq turns each question into a read-only SQL query, the server validates the query against an allowlisted HR schema, and Prisma executes it against the live database. Groq then formats an answer using only those returned rows; the UI also shows the verified result rows and their source. Query output is capped at 100 rows, while SQL aggregates can calculate over all matching records. There is no saved-answer cache or offline answer path: if Groq is unavailable, the API returns an error. Payroll, attendance, leave balances, and recruitment data are not part of this database.
-
-*The configured default model is `openai/gpt-oss-20b` (about 21B total parameters); `GROQ_MODEL` can override it in a deployment. Parameter count alone does not establish answer quality, and this repository has no benchmark proving 97% correctness for this model or a future OpenAI model. Treat 97% as a target that needs a representative HR query evaluation set before it can be claimed. [Model details](https://developers.openai.com/api/docs/models/gpt-oss-20b).*
+Request and task transitions are validated by the server and recorded in history. HR Admins can use Smart Query to ask questions about live platform data. See [ARCHITECTURE.md](./ARCHITECTURE.md) for its design, access controls, and limitations. Payroll, attendance, leave balances, and recruitment data are not part of this platform.
 
 ## Environment variables
 
@@ -68,7 +105,7 @@ Request and task transitions are validated by the server and recorded in history
 |---|---|
 | `DATABASE_URL` | Local SQLite URL; the deployed Vercel app uses the Supabase PostgreSQL transaction-pooler URL. |
 | `DIRECT_URL` | Supabase direct/session-pooler URL used by Prisma migrations. |
-| `GROQ_API_KEY` | Required server-side key for translating questions into live SQL queries and formatting answers. |
+| `GROQ_API_KEY` | Required server-side key for translating questions into live SQL queries and formatting answers. The Playwright E2E server intentionally omits it and uses a deterministic live-record test provider. |
 | `GROQ_MODEL` | Optional Groq model ID; defaults to `openai/gpt-oss-20b`. |
 | `NEXT_PUBLIC_APP_URL` | Optional app origin; local default is `http://localhost:3000`. |
 
@@ -76,11 +113,9 @@ Keep real database credentials and AI keys in local or host-managed environment 
 
 ## Supabase and Vercel deployment
 
-The assessment platform is deployed at [https://hris-systems-developer-assessment.vercel.app](https://hris-systems-developer-assessment.vercel.app). Vercel builds the Next.js app with `npm run build:postgres`; its server-side Prisma Client uses the PostgreSQL schema in `prisma/postgres/`. Supabase PostgreSQL is seeded with the assessment data described above. The successful `npm run verify:seed:postgres` output confirms the hosted dataset, including all 100 Employee-role accounts, five request-comment threads, and seven onboarding plans with 10 tasks each.
+The app is live at [hris-systems-developer-assessment.vercel.app](https://hris-systems-developer-assessment.vercel.app). Vercel builds with `npm run build:postgres` and deploys production-branch pushes; other branches create Preview deployments. The hosted Supabase PostgreSQL seed is verified with `npm run verify:seed:postgres`.
 
-The GitHub repository is connected to Vercel. Pushes to Vercel's configured production branch trigger a new production deployment; other branches create Preview deployments. For future database schema changes, apply committed migrations with `npm run db:migrate:postgres` before deploying code that depends on those changes. Do not re-run the setup seed against live data: it is intended for an empty assessment database and refuses unrelated partial data. Local SQLite setup and PostgreSQL deployment use separate databases; local records are not automatically copied to Supabase.
-
-For a new environment, copy the Supabase transaction-pooler URL to `DATABASE_URL` (port `6543`, with Prisma's `pgbouncer=true` parameter), and use a direct or session-pooler URL for `DIRECT_URL`. Keep both values server-side and set `GROQ_API_KEY` so Smart Query can translate each new question into a live database query. A separate Supabase project is recommended for Preview if Preview testing must not modify the assessment dataset.
+Local SQLite and hosted PostgreSQL are separate databases. Apply PostgreSQL schema changes with `npm run db:migrate:postgres` before deploying dependent code; do not run the setup seed against live data. Configure `DATABASE_URL` with the Supabase transaction-pooler URL, `DIRECT_URL` with a direct or session-pooler URL, and `GROQ_API_KEY` server-side. Use a separate Supabase project for Preview when it must be isolated from assessment data.
 
 ## Further documentation
 

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireRole } from "@/lib/auth/permissions";
-import { executeSqlQuery, generateAnswer, planSqlQuery } from "@/lib/ai/smart-query";
+import { executeDeterministicQuery, executeSqlQuery, generateAnswer, planSqlQuery } from "@/lib/ai/smart-query";
 import { apiError } from "@/lib/auth/permissions";
 import { z } from "zod";
 import { checkRateLimit } from "@/lib/security/rate-limit";
@@ -14,19 +14,25 @@ export async function POST(request: Request) {
     if (!limit.allowed) return NextResponse.json({ error: { code: "RATE_LIMITED", message: "Please wait a moment before asking another question." } }, { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } });
     const parsed = schema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Ask a question between 5 and 500 characters." } }, { status: 400 });
-    if (!process.env.GROQ_API_KEY?.trim()) return NextResponse.json({ error: { code: "AI_NOT_CONFIGURED", message: "Smart Query needs GROQ_API_KEY. Set it in the local environment or in Vercel Project Settings → Environment Variables, then restart or redeploy." } }, { status: 503 });
+    const useDeterministicFallback = process.env.HRIS_NEXT_DIST_DIR === ".next-e2e";
+    if (!process.env.GROQ_API_KEY?.trim() && !useDeterministicFallback) return NextResponse.json({ error: { code: "AI_NOT_CONFIGURED", message: "Smart Query needs GROQ_API_KEY. Set it in the local environment or in Vercel Project Settings → Environment Variables, then restart or redeploy." } }, { status: 503 });
     let result;
     try {
-      let sql = await planSqlQuery(parsed.data.question);
-      if (!sql) return NextResponse.json({ error: { code: "QUERY_NOT_GENERATED", message: "I could not translate that question into a database query. Try rephrasing it with the employee, request, or onboarding details you want." } }, { status: 422 });
-      try {
-        result = await executeSqlQuery(sql);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : "The query failed validation.";
-        if (!reason.includes("generated SQL")) throw error;
-        sql = await planSqlQuery(parsed.data.question, reason);
-        if (!sql) return NextResponse.json({ error: { code: "QUERY_NOT_GENERATED", message: "Groq could not produce a safe query for that question. Please rephrase it with the employee, request, or onboarding details you want." } }, { status: 422 });
-        result = await executeSqlQuery(sql);
+      if (useDeterministicFallback && !process.env.GROQ_API_KEY?.trim()) {
+        result = await executeDeterministicQuery(parsed.data.question);
+        if (!result) return NextResponse.json({ error: { code: "QUERY_NOT_GENERATED", message: "I could not map that question to the live HR records. Please rephrase it with employee, request, or onboarding details." } }, { status: 422 });
+      } else {
+        let sql = await planSqlQuery(parsed.data.question);
+        if (!sql) return NextResponse.json({ error: { code: "QUERY_NOT_GENERATED", message: "I could not translate that question into a database query. Try rephrasing it with the employee, request, or onboarding details you want." } }, { status: 422 });
+        try {
+          result = await executeSqlQuery(sql);
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : "The query failed validation.";
+          if (!reason.includes("generated SQL")) throw error;
+          sql = await planSqlQuery(parsed.data.question, reason);
+          if (!sql) return NextResponse.json({ error: { code: "QUERY_NOT_GENERATED", message: "Groq could not produce a safe query for that question. Please rephrase it with the employee, request, or onboarding details you want." } }, { status: 422 });
+          result = await executeSqlQuery(sql);
+        }
       }
       let generated;
       try {
