@@ -58,7 +58,9 @@ The seed creates 109 user accounts: 100 Employee-role users, 8 Managers, and 1 H
 - **Manager:** handle in-scope team requests; monitor direct reports; act only on tasks assigned to them.
 - **HR Admin:** manage people, requests, checklist templates, and onboarding assignments; see organization-wide dashboards; ask Smart Query questions.
 
-Request and task transitions are validated by the server and recorded in history. Smart Query answers supported questions from live database records. Employee and manager names are matched without requiring exact capitalization, and punctuation such as a question mark is optional. With `GROQ_API_KEY` configured, Groq maps plain-English questions to a validated plan and may phrase the verified result. Without it, supported built-in patterns return deterministic database answers. The model does not generate or execute SQL. Payroll, attendance, leave balances, and recruitment data are not part of this database.
+Request and task transitions are validated by the server and recorded in history. Smart Query is an HR Admin-only natural-language-to-SQL feature: Groq turns each question into a read-only SQL query, the server validates the query against an allowlisted HR schema, and Prisma executes it against the live database. Groq then formats an answer using only those returned rows; the UI also shows the verified result rows and their source. Query output is capped at 100 rows, while SQL aggregates can calculate over all matching records. There is no saved-answer cache or offline answer path: if Groq is unavailable, the API returns an error. Payroll, attendance, leave balances, and recruitment data are not part of this database.
+
+*The configured default model is `openai/gpt-oss-20b` (about 21B total parameters); `GROQ_MODEL` can override it in a deployment. Parameter count alone does not establish answer quality, and this repository has no benchmark proving 97% correctness for this model or a future OpenAI model. Treat 97% as a target that needs a representative HR query evaluation set before it can be claimed. [Model details](https://developers.openai.com/api/docs/models/gpt-oss-20b).*
 
 ## Environment variables
 
@@ -66,7 +68,7 @@ Request and task transitions are validated by the server and recorded in history
 |---|---|
 | `DATABASE_URL` | Local SQLite URL; the deployed Vercel app uses the Supabase PostgreSQL transaction-pooler URL. |
 | `DIRECT_URL` | Supabase direct/session-pooler URL used by Prisma migrations. |
-| `GROQ_API_KEY` | Optional server-side Groq key for Smart Query planning and answer phrasing. Leave unset for built-in patterns. |
+| `GROQ_API_KEY` | Required server-side key for translating questions into live SQL queries and formatting answers. |
 | `GROQ_MODEL` | Optional Groq model ID; defaults to `openai/gpt-oss-20b`. |
 | `NEXT_PUBLIC_APP_URL` | Optional app origin; local default is `http://localhost:3000`. |
 
@@ -78,7 +80,7 @@ The assessment platform is deployed at [https://hris-systems-developer-assessmen
 
 The GitHub repository is connected to Vercel. Pushes to Vercel's configured production branch trigger a new production deployment; other branches create Preview deployments. For future database schema changes, apply committed migrations with `npm run db:migrate:postgres` before deploying code that depends on those changes. Do not re-run the setup seed against live data: it is intended for an empty assessment database and refuses unrelated partial data. Local SQLite setup and PostgreSQL deployment use separate databases; local records are not automatically copied to Supabase.
 
-For a new environment, copy the Supabase transaction-pooler URL to `DATABASE_URL` (port `6543`, with Prisma's `pgbouncer=true` parameter), and use a direct or session-pooler URL for `DIRECT_URL`. Keep both values server-side. `GROQ_API_KEY` enables the optional Groq planning and response-phrasing steps in Smart Query; the deterministic database-query fallback remains available without it. A separate Supabase project is recommended for Preview if Preview testing must not modify the assessment dataset.
+For a new environment, copy the Supabase transaction-pooler URL to `DATABASE_URL` (port `6543`, with Prisma's `pgbouncer=true` parameter), and use a direct or session-pooler URL for `DIRECT_URL`. Keep both values server-side and set `GROQ_API_KEY` so Smart Query can translate each new question into a live database query. A separate Supabase project is recommended for Preview if Preview testing must not modify the assessment dataset.
 
 ## Further documentation
 

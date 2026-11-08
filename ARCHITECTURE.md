@@ -35,11 +35,11 @@ flowchart LR
   P -->|local development| DB[(SQLite)]
   P -->|deployed application| PG[(Supabase PostgreSQL)]
   A --> Q[Smart Query]
-  Q -->|fixed Prisma queries| P
-  Q -. optional, validated intent / answer phrasing .-> G[Groq API]
+  Q -->|validated read-only SQL| P
+  Q -->|SQL planning and answer formatting| G[Groq API]
 ```
 
-The service request and onboarding modules use the same `User` identity, reporting line, roles, and session. The unified dashboard shows headcount by country, open request counts by status and category (including a chart), onboarding progress and overdue work, plus a cross-module list of active onboarding hires with open IT equipment requests. Smart Query is a read-only HR Admin feature: an optional Groq call can map a question to a constrained query plan or phrase a verified result, while fixed Prisma code performs all data access and calculations.
+The service request and onboarding modules use the same `User` identity, reporting line, roles, and session. The unified dashboard shows headcount by country, open request counts by status and category (including a chart), onboarding progress and overdue work, plus a cross-module list of active onboarding hires with open IT equipment requests. Smart Query is a read-only HR Admin feature. Groq first converts the question into SQL; server-side validation checks that it is one bounded `SELECT`/`WITH` query over allowlisted HR tables and safe functions. Prisma executes the accepted SQL against the current database (PostgreSQL in Vercel; SQLite locally). Groq then formats the answer using only the returned rows, which are also shown in the UI with provenance. If either Groq call fails, the API returns an error; it does not produce an offline answer.
 
 Local development uses SQLite. The deployed application runs on Vercel and connects through Prisma to Supabase PostgreSQL using the PostgreSQL schema and migration in `prisma/postgres/`. The hosted migration and assessment seed have been applied; `npm run verify:seed:postgres` verified 109 accounts, 36 service requests, and 7 onboarding plans. The local SQLite file is separate and is not copied to Supabase.
 
@@ -66,28 +66,28 @@ The shared `User` table avoids separate employee, requester, assignee, and task-
 
 All JSON success responses use `{ "data": ... }`; errors use `{ "error": { "code": "...", "message": "..." } }`. Inputs are validated on the server. All endpoints except login require the HTTP-only session cookie unless noted. `HR` means HR Admin; `Mgr` means Manager; `Emp` means Employee.
 
-| Method and path | Request | Response | Authentication / scope |
-|---|---|---|---|
-| `POST /api/auth/login` | `{ email, password }` | `{ data: { user: { id, fullName, role } }`; sets session cookie | Public; rate limited; inactive users cannot sign in. |
-| `POST /api/auth/logout` | No body | `{ data: { ok: true } }`; clears session | Signed-in session if present. |
-| `GET /api/auth/session` | No body | `{ data: { user } }` | Signed-in session; `401` otherwise. |
-| `GET /api/users` | Query: `search`, `country`, `department`, `role`, `status` | Array of safe user records, no password hash | HR sees directory; Mgr direct reports; Emp self. |
-| `POST /api/users` | `{ fullName, email, employeeNumber, country, department, role, employmentStatus, joiningDate, managerId?, password }` | Created safe user record | HR only. |
-| `GET /api/users/:id` | No body | Safe user record | HR; self; or Mgr viewing a direct report. |
-| `PATCH /api/users/:id` | Partial `{ fullName?, country?, department?, role?, employmentStatus?, managerId? }` | Updated safe user record | HR only; deactivation also revokes sessions. |
-| `GET /api/service-requests` | Query: `status`, `category`, `priority`; HR-only `country` | Up to 100 scoped request records with requester, assignee, comment count | HR all; Mgr team/own/assigned; Emp own/assigned. Filters are intersected with scope. |
-| `POST /api/service-requests` | `{ title, description, category, priority }` | Created request, `201` | Any signed-in role; requester is the current user and initial status is `SUBMITTED`. |
-| `GET /api/service-requests/:id` | No body | Request, comments, and status history | HR; requester; explicit assignee; or requester’s Mgr. Unavailable records return `404`. |
-| `PATCH /api/service-requests/:id` | `{ action: ASSIGN, assigneeId }`, `{ action: START }`, `{ action: RESOLVE }`, `{ action: CLOSE }`, or `{ action: REOPEN, note }` | Updated request | Scoped user; per-transition role and ownership rules in §5. |
-| `POST /api/service-requests/:id/comments` | `{ body }` | Created comment with author, `201` | Same request access scope as detail. |
-| `GET /api/onboarding` | Optional query `myTasks=true` | Scoped onboarding plans with their visible tasks | HR all; Mgr direct reports and tasks they own; Emp own plan and tasks they own. Non-HR users may request only their own tasks. |
-| `POST /api/onboarding` | `{ employeeId, templateId, startDate: YYYY-MM-DD }` | Created plan with copied tasks, `201` | HR only; target must be a non-inactive, non-HR user, template active, and no existing active plan. The UI's employee picker limits this to Employee-role users. |
-| `GET /api/onboarding/templates` | No body | HR gets active and archived templates; other roles get active templates only | Any signed-in user. |
-| `POST /api/onboarding/templates` | `{ name, description, tasks: [{ title, description, department, ownerRole, dueOffsetDays, dependsOnIndex? }] }` | Created active template, `201` | HR only; 8–12 tasks; dependency must point to an earlier task. |
-| `PATCH /api/onboarding/templates/:id` | Any non-empty subset of `{ name?, description?, active?, tasks? }` | Updated template | HR only; assigned templates cannot change task count. |
-| `PATCH /api/onboarding/tasks/:id` | `{ status?, ownerId?, note? }` | Updated task | Owner may execute allowed transitions; HR may set a valid owner or reopen a completed task with a note. |
-| `GET /api/dashboard` | No body | Headcount, request status/category aggregates, onboarding progress, overdue count, and HR cross-module insight | HR organization-wide; Mgr team scope; Emp personal scope. |
-| `POST /api/ai/query` | `{ question }` | `{ answer, summary, results, sources, provider, generatedAt, notice? }` | HR only; rate limited; read-only. Unsupported question returns `422`. |
+| Domain | Method and path | Request | Response | Authentication / scope |
+|---|---|---|---|---|
+| Auth | `POST /api/auth/login` | `{ email, password }` | `{ data: { user: { id, fullName, role } }`; sets session cookie | Public; rate limited; inactive users cannot sign in. |
+| Auth | `POST /api/auth/logout` | No body | `{ data: { ok: true } }`; clears session | Signed-in session if present. |
+| Auth | `GET /api/auth/session` | No body | `{ data: { user } }` | Signed-in session; `401` otherwise. |
+| Users | `GET /api/users` | Query: `search`, `country`, `department`, `role`, `status` | Array of safe user records, no password hash | HR sees directory; Mgr direct reports; Emp self. |
+| Users | `POST /api/users` | `{ fullName, email, employeeNumber, country, department, role, employmentStatus, joiningDate, managerId?, password }` | Created safe user record | HR only. |
+| Users | `GET /api/users/:id` | No body | Safe user record | HR; self; or Mgr viewing a direct report. |
+| Users | `PATCH /api/users/:id` | Partial `{ fullName?, country?, department?, role?, employmentStatus?, managerId? }` | Updated safe user record | HR only; deactivation also revokes sessions. |
+| Service requests | `GET /api/service-requests` | Query: `status`, `category`, `priority`; HR-only `country` | Up to 100 scoped request records with requester, assignee, comment count | HR all; Mgr team/own/assigned; Emp own/assigned. Filters are intersected with scope. |
+| Service requests | `POST /api/service-requests` | `{ title, description, category, priority }` | Created request, `201` | Any signed-in role; requester is the current user and initial status is `SUBMITTED`. |
+| Service requests | `GET /api/service-requests/:id` | No body | Request, comments, and status history | HR; requester; explicit assignee; or requester’s Mgr. Unavailable records return `404`. |
+| Service requests | `PATCH /api/service-requests/:id` | `{ action: ASSIGN, assigneeId }`, `{ action: START }`, `{ action: RESOLVE }`, `{ action: CLOSE }`, or `{ action: REOPEN, note }` | Updated request | Scoped user; per-transition role and ownership rules in §5. |
+| Service requests | `POST /api/service-requests/:id/comments` | `{ body }` | Created comment with author, `201` | Same request access scope as detail. |
+| Onboarding | `GET /api/onboarding` | Optional query `myTasks=true` | Scoped onboarding plans with their visible tasks | HR all; Mgr direct reports and tasks they own; Emp own plan and tasks they own. Non-HR users may request only their own tasks. |
+| Onboarding | `POST /api/onboarding` | `{ employeeId, templateId, startDate: YYYY-MM-DD }` | Created plan with copied tasks, `201` | HR only; target must be a non-inactive, non-HR user, template active, and no existing active plan. The UI picker excludes employees with an active plan. |
+| Onboarding | `GET /api/onboarding/templates` | No body | HR gets active and archived templates; other roles get active templates only | Any signed-in user. |
+| Onboarding | `POST /api/onboarding/templates` | `{ name, description, tasks: [{ title, description, department, ownerRole, dueOffsetDays, dependsOnIndex? }] }` | Created active template, `201` | HR only; 8–12 tasks; dependency must point to an earlier task. |
+| Onboarding | `PATCH /api/onboarding/templates/:id` | Any non-empty subset of `{ name?, description?, active?, tasks? }` | Updated template | HR only; assigned templates cannot change task count. |
+| Onboarding | `PATCH /api/onboarding/tasks/:id` | `{ status?, ownerId?, note? }` | Updated task | Owner may execute allowed transitions; HR may set a valid owner or reopen a completed task with a note. |
+| Dashboard | `GET /api/dashboard` | No body | Headcount, request status/category aggregates, onboarding progress, overdue count, and HR cross-module insight | HR organization-wide; Mgr team scope; Emp personal scope. |
+| AI | `POST /api/ai/query` | `{ question }` | `{ answer, summary, results, sources, provider, generatedAt }` | HR only; rate limited; read-only. Invalid/unsafe SQL returns `422`; missing or unavailable Groq returns `503` without an answer. |
 
 ## 4. Access control
 
@@ -131,14 +131,14 @@ HR Admin alone changes task ownership. An owner must not be inactive and must ma
 ## 6. Trade-offs and next steps
 
 1. **SQLite locally, PostgreSQL for the hosted app.** SQLite keeps local setup simple, while Vercel's serverless instances need a shared durable database. The app therefore has provider-specific Prisma schemas and migrations. Supabase PostgreSQL is the deployed database and its assessment seed has been verified. Local SQLite records are intentionally not copied to the hosted database; both environments use generated assessment data.
-2. **Constrained AI query plans instead of model-written SQL.** Letting an LLM generate SQL is flexible but gives it unnecessary access to schema and query execution, and makes totals hard to trust. Smart Query uses typed intents/filters and fixed Prisma queries; the trade-off is that unsupported or ambiguous questions must be refused. With more time, expand query coverage through explicit intents and evaluation cases, not free-form SQL.
+2. **Validated read-only SQL for Smart Query.** Groq translates each question into one bounded query. The server rejects writes, system-table access, unknown HR tables, unsafe functions, multiple statements, and unbounded results before execution. PostgreSQL queries run in a read-only transaction; the SQL validator also applies to local SQLite. Result rows are capped at 100 for display, while valid aggregate queries can operate over all matching records. Groq formats the answer using only those live rows. A provider failure returns an error, never a database-generated fallback answer. The SQL is generated by an LLM, so validation and database permissions are defense in depth rather than a claim that model output is inherently safe.
 3. **Application RBAC instead of database row-level security.** Route Handlers enforce role and record scope consistently for this single application. Database RLS would provide another defense layer, especially for multiple clients, but requires a different connection/auth model. For a larger team, add PostgreSQL RLS policies and an automated permission matrix.
 
 ## 7. Current limitations
 
 - The seed creates 109 user accounts: 100 Employee-role accounts, 8 Managers, and 1 HR Admin. The seed verifier checks each role count.
 - The deployed assessment URL is listed in the README. The current hosted database contains synthetic assessment data and is not intended for real employee records.
-- Smart Query covers the intents listed in its planner; payroll, attendance, leave-balance, and recruitment data are not present.
+- Smart Query requires a working server-side `GROQ_API_KEY` for both SQL planning and answer formatting. It queries the current database on every request and returns an error if Groq is unavailable. The default configured model is `openai/gpt-oss-20b` (about 21B total parameters); deployment settings may override `GROQ_MODEL`. This repository contains no evaluation that supports a 97% correctness claim for this or another model. Payroll, attendance, leave-balance, and recruitment data are not present.
 - Login and Smart Query rate limits are process-local. A larger multi-instance production service should use a shared rate-limit store and add PostgreSQL row-level security as a further isolation layer.
 
 ## References

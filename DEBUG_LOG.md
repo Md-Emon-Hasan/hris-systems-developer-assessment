@@ -7,7 +7,7 @@ This log records three corrected defects, their root causes, the applied fixes, 
 ## Contents
 
 - [Assigned employees could not access service requests](#1-an-assigned-employee-could-not-access-a-service-request)
-- [Smart Query ignored an employee name in its fallback query](#2-smart-query-ignored-an-employee-name-in-its-fallback-query)
+- [Smart Query omitted an employee name from request filters](#2-smart-query-omitted-an-employee-name-from-request-filters)
 - [Assessment seed could erase existing data](#3-running-the-assessment-seed-could-erase-existing-data)
 
 These are three corrected defects from development. Each entry records the user-visible symptom, investigation, cause, fix, and prevention. Existing tests are identified where they cover the behavior; prevention work that is not yet covered is described as a follow-up rather than claimed as completed.
@@ -30,7 +30,7 @@ return principal.role === "HR_ADMIN" || request.requester.id === principal.id ||
 
 **Prevention.** `src/lib/domains/request-access.test.ts` covers requester, assignee, Manager, HR Admin, and unrelated-user access. Keep the same scope helper on every endpoint that reads or mutates a request.
 
-## 2. Smart Query ignored an employee name in its fallback query
+## 2. Smart Query omitted an employee name from request filters
 
 **Symptom.** An HR Admin could ask Smart Query for open requests associated with a named employee, but the deterministic fallback returned the count for the broader request set because it did not apply a person filter.
 
@@ -38,7 +38,7 @@ return principal.role === "HR_ADMIN" || request.requester.id === principal.id ||
 
 **Root cause.** The fallback recognized request intent and some structured filters but did not ground a person mentioned in natural language against the shared user directory. Treating a successful database response as a successful answer hid the missing constraint.
 
-**Fix.** Added `findMentionedPerson` to normalize the question, match full or uniquely identifying name tokens against directory records, and include a resolved name in the fixed Prisma filters. The optional LLM can classify a question or phrase the result, but it never constructs or executes SQL.
+**Fix.** The original fixed-Prisma implementation added directory-based person matching. Smart Query has since moved to a natural-language-to-SQL flow: Groq generates SQL, server-side checks restrict it to a bounded read-only query over allowlisted HR tables, and Prisma executes it against the live database. Groq formats the answer from the returned rows. If either Groq call fails, the API returns an error; it does not substitute a database-formatted answer. The current implementation does not use the old fallback planner shown in the historical snippet below.
 
 ```ts
 const mentionedPerson = await findMentionedPerson(question);
@@ -52,7 +52,7 @@ const filters = [
 ];
 ```
 
-**Prevention.** Add integration coverage for exact names, ambiguous partial names, requester versus assignee matches, and both Groq-enabled and deterministic-fallback paths. Assert the returned records and provenance against known database rows; a fluent model answer alone is not evidence that the query applied every requested filter.
+**Prevention.** Evaluate generated SQL using exact and partial person names, requester versus assignee matches, and ambiguous names. Assert returned records and provenance against known database rows; verify unsafe SQL is rejected and provider failures return an error without exposing a database summary as an answer.
 
 ## 3. Running the assessment seed could erase existing data
 

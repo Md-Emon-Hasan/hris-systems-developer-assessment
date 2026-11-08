@@ -8,14 +8,14 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Activity, ArrowUpRight, Bot, ChevronDown, CircleHelp, ClipboardList, Clock3, FilePlus2, LayoutDashboard, LogOut, MessageSquareText, Search, ShieldCheck, Sparkles, Users, X } from "lucide-react";
+import { Activity, ArrowUpRight, Bot, ChevronDown, CircleHelp, ClipboardList, Clock3, FilePlus2, LayoutDashboard, LogOut, Menu, MessageSquareText, Search, ShieldCheck, Sparkles, Users, X } from "lucide-react";
 import type { CurrentUser } from "@/lib/auth/session";
 import { requestSchema } from "@/lib/validation/schemas";
 
 type RequestItem = { id: string; requestNumber: string; title: string; description: string; category: string; priority: string; status: string; createdAt: string; requester: { id: string; fullName: string; country: string; department: string; managerId: string | null }; assignee: { id: string; fullName: string } | null; _count?: { comments: number } };
 type DashboardData = { headcountByCountry: { country: string; count: number }[]; requests: { total: number; byStatus: { status: string; count: number }[]; byCategory: { category: string; count: number }[] }; onboarding: { inProgress: number; overdueTasks: number; hires: { id: string; name: string; country: string; total: number; completed: number; pending: number; overdue: number; blocked: number }[] }; crossModule: { requestNumber: string; title: string; requester: string; country: string; status: string }[] };
 type Task = { id: string; title: string; description: string; department: string; ownerRole: string; status: string; dueDate: string; ownerId: string | null; owner: { id: string; fullName: string } | null; dependsOn: { id: string; title: string; status: string } | null };
-type OnboardingItem = { id: string; employee: { id: string; fullName: string; country: string; department: string; joiningDate: string }; template: { name: string }; tasks: Task[] };
+type OnboardingItem = { id: string; status: string; employee: { id: string; fullName: string; country: string; department: string; joiningDate: string }; template: { name: string }; tasks: Task[] };
 type TemplateTaskOption = { id: string; title: string; description: string; department: string; ownerRole: string; dueOffsetDays: number; dependsOnId: string | null };
 type TemplateOption = { id: string; name: string; description: string; active: boolean; tasks: TemplateTaskOption[] };
 type TemplateTaskDraft = { title: string; description: string; department: string; ownerRole: string; dueOffsetDays: number; dependsOnIndex: number | null };
@@ -43,6 +43,7 @@ export default function Workspace({ user, initialTab }: { user: CurrentUser; ini
   const [tab, setTabState] = useState<Tab>(initialTab);
   const [requestOpen, setRequestOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [selectedRequest, setSelectedRequest] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const roleName = user.role === "HR_ADMIN" ? "HR Admin" : user.role === "MANAGER" ? "Manager" : "Employee";
@@ -76,6 +77,12 @@ export default function Workspace({ user, initialTab }: { user: CurrentUser; ini
     window.addEventListener("popstate", syncTab);
     return () => window.removeEventListener("popstate", syncTab);
   }, [availableTabs]);
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setMobileNavOpen(false); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [mobileNavOpen]);
   const dashboard = useQuery({ queryKey: ["dashboard"], queryFn: () => getData<DashboardData>("/api/dashboard") });
   const requests = useQuery({ queryKey: ["requests"], queryFn: () => getData<RequestItem[]>("/api/service-requests") });
   const onboardings = useQuery({ queryKey: ["onboarding"], queryFn: () => getData<OnboardingItem[]>("/api/onboarding") });
@@ -83,16 +90,17 @@ export default function Workspace({ user, initialTab }: { user: CurrentUser; ini
   const refresh = () => { void queryClient.invalidateQueries(); };
 
   return <div className="workspace">
-    <aside className="sidebar">
+    <button type="button" className={`mobile-nav-backdrop${mobileNavOpen ? " is-open" : ""}`} aria-label="Close navigation" tabIndex={mobileNavOpen ? 0 : -1} onClick={() => setMobileNavOpen(false)} />
+    <aside id="workspace-navigation" className={`sidebar${mobileNavOpen ? " mobile-nav-open" : ""}`}>
       <div className="sidebar-brand"><span className="sidebar-brand-logo"><Image src="/next-ventures-logo.svg" alt="NEXT Ventures" width={92} height={32} priority /></span><span className="brand-text">NEXT VENTURES<small>PEOPLE OPERATIONS</small></span></div>
       <div className="nav-label">WORKSPACE</div>
-      {nav.map((item) => <button key={item.label} className={`nav-link ${tab === item.label ? "active" : ""}`} onClick={() => setTab(item.label)}>{item.icon}{item.label}</button>)}
+      {nav.map((item) => <button key={item.label} className={`nav-link ${tab === item.label ? "active" : ""}`} onClick={() => { setTab(item.label); setMobileNavOpen(false); }}>{item.icon}{item.label}</button>)}
       <div className="nav-label" style={{ marginTop: 15 }}>YOUR ACCOUNT</div>
-      <button className="nav-link" onClick={() => setProfileOpen(true)}><ShieldCheck size={16} />My profile</button>
+      <button className="nav-link" onClick={() => { setProfileOpen(true); setMobileNavOpen(false); }}><ShieldCheck size={16} />My profile</button>
       <div className="sidebar-bottom"><div className="user-chip"><span className="avatar">{user.fullName.split(" ").map((s) => s[0]).slice(0, 2).join("")}</span><div><div className="user-name">{user.fullName}</div><div className="user-role">{roleName} · {user.country}</div></div></div><button className="nav-link" onClick={async () => { await fetch("/api/auth/logout", { method: "POST" }); router.push("/login"); router.refresh(); }}><LogOut size={15} />Sign out</button></div>
     </aside>
     <main className="main-area">
-      <header className="topbar"><div className="crumb">People Operations <span style={{ margin: "0 8px", color: "#bdc5be" }}>/</span><strong>{tab}</strong></div><div className="topbar-right"><span className="date-label">{new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric" }).format(new Date())}</span><span className="avatar">{user.fullName.split(" ").map((s) => s[0]).slice(0, 2).join("")}</span></div></header>
+      <header className="topbar"><button type="button" className="mobile-menu-toggle" aria-label={mobileNavOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={mobileNavOpen} aria-controls="workspace-navigation" onClick={() => setMobileNavOpen((open) => !open)}>{mobileNavOpen ? <X size={20} /> : <Menu size={20} />}</button><div className="crumb">People Operations <span style={{ margin: "0 8px", color: "#bdc5be" }}>/</span><strong>{tab}</strong></div><div className="topbar-right"><span className="date-label">{new Intl.DateTimeFormat("en", { weekday: "short", month: "short", day: "numeric" }).format(new Date())}</span><span className="avatar">{user.fullName.split(" ").map((s) => s[0]).slice(0, 2).join("")}</span></div></header>
       <div className="page-content">
         <div className="page-heading"><div><p className="eyebrow green">{tab === "Overview" ? "YOUR PEOPLE OPERATIONS" : "NEXT VENTURES WORKSPACE"}</p><h1>{tab === "Overview" ? `Good morning, ${user.fullName.split(" ")[0]}` : tab}</h1><p>{tab === "Overview" ? "A clear view of requests, people, and the work ahead." : pageSubtitle(tab, user.role)}</p></div><div className="heading-actions"><button className="button secondary" onClick={() => setTab("Service requests")}><Search size={15} />Find support</button><button className="button primary" onClick={() => setRequestOpen(true)}><FilePlus2 size={15} />New request</button></div></div>
         {(tab === "Overview" || tab === "Service requests") && <>
@@ -226,23 +234,27 @@ function OnboardingView({ rows, loading, role, userId, refresh }: { rows: Onboar
       {rows.length === 0 ? <div className="empty-state">No onboarding plans are assigned in your scope.</div> : <div className="onboarding-plan-list">{rows.map((row) => <OnboardingPlanCard key={row.id} row={row} role={role} userId={userId} people={assignablePeople.data ?? []} busy={busy} notice={notice} updateTask={updateTask} />)}</div>}
       {role === "HR_ADMIN" && <div className="section-gap"><div className="panel-heading"><div><h3 className="panel-title">Checklist templates</h3><p className="panel-subtitle">{(templates.data ?? []).length} available templates</p></div></div>{(templates.data ?? []).map((template) => <div key={template.id} className="hire-row"><div><div className="hire-name">{template.name}</div><div className="hire-progress">{template.tasks.length} tasks · {template.description}</div></div><span className={`status-pill ${template.active ? "status-completed" : "status-closed"}`}>{template.active ? "Active" : "Archived"}</span><button aria-label={`Edit template ${template.name}`} className="button secondary" onClick={() => { setEditingTemplate(template); setDialog("template"); }}>Edit</button><button className="button secondary" onClick={() => void archiveTemplate(template.id, template.active)}>{template.active ? "Archive" : "Activate"}</button></div>)}</div>}
     </div>
-    {dialog === "assign" && <AssignOnboardingDialog people={assignablePeople.data ?? []} templates={(templates.data ?? []).filter((template) => template.active)} close={() => setDialog(null)} onDone={async () => { await queryClient.refetchQueries({ queryKey: ["onboarding"], type: "active" }); setDialog(null); void templates.refetch(); }} />}
+    {dialog === "assign" && <AssignOnboardingDialog people={assignablePeople.data ?? []} activeEmployeeIds={new Set(rows.filter((row) => row.status === "IN_PROGRESS").map((row) => row.employee.id))} templates={(templates.data ?? []).filter((template) => template.active)} close={() => setDialog(null)} onDone={async () => { await queryClient.refetchQueries({ queryKey: ["onboarding"], type: "active" }); setDialog(null); void templates.refetch(); }} />}
     {dialog === "template" && <TemplateDialog initial={editingTemplate} close={() => setDialog(null)} onDone={() => { setDialog(null); setEditingTemplate(null); void templates.refetch(); }} />}
   </>;
 }
 
-function AssignOnboardingDialog({ people, templates, close, onDone }: { people: Person[]; templates: TemplateOption[]; close: () => void; onDone: () => Promise<void> }) {
+function AssignOnboardingDialog({ people, activeEmployeeIds, templates, close, onDone }: { people: Person[]; activeEmployeeIds: Set<string>; templates: TemplateOption[]; close: () => void; onDone: () => Promise<void> }) {
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
+  const eligiblePeople = people.filter((person) => person.role === "EMPLOYEE" && person.employmentStatus !== "INACTIVE" && !activeEmployeeIds.has(person.id));
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); const values = new FormData(event.currentTarget);
-    const response = await fetch("/api/onboarding", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ employeeId: values.get("employeeId"), templateId: values.get("templateId"), startDate: values.get("startDate") }) });
-    const body = await response.json(); setBusy(false); if (!response.ok) { setError(body.error?.message ?? "Could not assign onboarding."); return; } await onDone();
+    try {
+      const response = await fetch("/api/onboarding", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ employeeId: values.get("employeeId"), templateId: values.get("templateId"), startDate: values.get("startDate") }) });
+      const body = await response.json(); if (!response.ok) { setError(body.error?.message ?? "Could not assign onboarding."); return; } await onDone();
+    } catch { setError("The server could not be reached. Check your connection and try again."); }
+    finally { setBusy(false); }
   }
   return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true"><div className="modal-header"><div><p className="eyebrow green">NEW HIRE</p><h2>Assign onboarding</h2></div><button className="button ghost" onClick={close}><X size={17} /></button></div><form className="modal-form" onSubmit={submit}>
-    <label className="form-label">Employee<select className="select-field" style={{ height: 42 }} name="employeeId" required>{people.filter((p) => p.role === "EMPLOYEE" && p.employmentStatus !== "INACTIVE").map((p) => <option key={p.id} value={p.id}>{p.fullName} · {p.country}</option>)}</select></label>
+    <label className="form-label">Employee<select className="select-field" style={{ height: 42 }} name="employeeId" required disabled={!eligiblePeople.length}><option value="">{eligiblePeople.length ? "Choose an employee" : "No employees available for onboarding"}</option>{eligiblePeople.map((person) => <option key={person.id} value={person.id}>{person.fullName} · {person.country}</option>)}</select></label>
     <label className="form-label">Checklist template<select className="select-field" style={{ height: 42 }} name="templateId" required disabled={!templates.length}>{templates.length ? templates.map((t) => <option key={t.id} value={t.id}>{t.name} ({t.tasks.length} tasks)</option>) : <option value="">No active templates available</option>}</select></label>
     <label className="form-label">Start date<input className="field" type="date" name="startDate" defaultValue={new Date().toISOString().slice(0, 10)} required /></label>
-    {error && <p className="form-error">{error}</p>}<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><button type="button" className="button secondary" onClick={close}>Cancel</button><button className="button primary" disabled={busy || !templates.length}>{busy ? "Assigning…" : "Create plan"}</button></div>
+    {error && <p className="form-error">{error}</p>}<div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}><button type="button" className="button secondary" onClick={close}>Cancel</button><button className="button primary" disabled={busy || !templates.length || !eligiblePeople.length}>{busy ? "Assigning…" : "Create plan"}</button></div>
   </form></section></div>;
 }
 
@@ -326,7 +338,16 @@ function AnswerContent({ answer }: { answer: string }) {
 function SmartQuery() {
   const examples = ["How many urgent requests are still open in Bangladesh?", "Which hires have overdue onboarding tasks?", "Which country has the highest onboarding completion rate?", "Which department has the most active employees?"];
   const [question, setQuestion] = useState(""); const [busy, setBusy] = useState(false); const [error, setError] = useState(""); const [answer, setAnswer] = useState<{ answer: string; summary: string; results: SmartQueryRow[] | SmartQueryRow; sources: string[]; provider: string; notice?: string } | null>(null);
-  async function ask(e: FormEvent) { e.preventDefault(); if (!question.trim()) return; setBusy(true); setError(""); setAnswer(null); const response = await fetch("/api/ai/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }) }); const body = await response.json(); setBusy(false); if (!response.ok) { setError(body.error?.message ?? "Could not answer that question."); return; } setAnswer(body.data); }
+  async function ask(e: FormEvent) {
+    e.preventDefault(); if (!question.trim()) return; setBusy(true); setError(""); setAnswer(null);
+    try {
+      const response = await fetch("/api/ai/query", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }) });
+      const body = await response.json();
+      if (!response.ok) { setError(body.error?.message ?? "Could not answer that question."); return; }
+      setAnswer(body.data);
+    } catch { setError("The AI assistant could not be reached. No answer was generated; please try again shortly."); }
+    finally { setBusy(false); }
+  }
   const resultRows = answer ? (Array.isArray(answer.results) ? answer.results : [answer.results]).filter((value): value is SmartQueryRow => Boolean(value) && typeof value === "object") : [];
   const resultColumns = [...new Set(resultRows.flatMap((row) => Object.keys(row)))];
   const showValue = (value: unknown) => value === null || value === undefined ? "—" : typeof value === "object" ? JSON.stringify(value) : String(value);
@@ -341,5 +362,5 @@ function SmartQuery() {
     if (column.toLowerCase().includes("date") && !Number.isNaN(Date.parse(text))) return dateLabel(text);
     return text;
   };
-  return <div className="content-grid"><section className="panel smart-query-panel" style={{ gridColumn: "1 / -1", maxWidth: 1040 }}><div className="panel-heading"><div><div className="stat-icon" style={{ display: "inline-grid", marginBottom: 13 }}><Bot size={17} /></div><h2 className="panel-title">Ask your people data</h2><p className="panel-subtitle">Ask in your own words about current employees, service requests, onboarding progress, deadlines, or task owners. Answers use the latest records and show the data they came from.</p></div><span className="status-pill status-completed">HR Admin only</span></div><form onSubmit={ask} className="modal-form"><label className="form-label">Your question<textarea className="textarea-field" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="For example: Which requests are still open in Bangladesh?" maxLength={500} /></label><div className="smart-query-examples">{examples.map((example) => <button type="button" key={example} className="button secondary" onClick={() => setQuestion(example)}>{example}</button>)}</div>{error && <p className="form-error">{error}</p>}<div><button className="button primary" disabled={busy || question.trim().length < 5}><Sparkles size={15} />{busy ? "Checking current records…" : "Ask assistant"}</button></div></form>{answer && <div className="smart-query-answer"><div className="insight-kicker"><Bot size={14} />{answer.provider.includes("groq") ? "AI answer · Groq" : "Database answer"}</div><AnswerContent answer={answer.answer} />{resultRows.length > 0 && resultColumns.length > 0 && <div className="smart-query-data"><div className="smart-query-data-heading"><div><h3>Verified live data</h3><p>These rows come directly from the current database.</p></div><span className="status-pill status-in_progress">{resultRows.length} {resultRows.length === 1 ? "row" : "rows"}</span></div><div className="table-wrap"><table className="request-table"><thead><tr>{resultColumns.map((column) => <th key={column}>{columnLabel(column)}</th>)}</tr></thead><tbody>{resultRows.map((row, index) => <tr key={index}>{resultColumns.map((column) => <td key={column}>{renderResultValue(column, row[column])}</td>)}</tr>)}</tbody></table></div></div>}<p className="request-meta">Source: {answer.sources.join(" ")}</p>{answer.notice && <p className="request-meta">{answer.notice}</p>}</div>}<p className="login-help"><CircleHelp size={14} />For the clearest answer, include a person, country, department, request status, or priority.</p></section></div>;
+  return <div className="content-grid"><section className="panel smart-query-panel" style={{ gridColumn: "1 / -1", maxWidth: 1040 }}><div className="panel-heading"><div><div className="stat-icon" style={{ display: "inline-grid", marginBottom: 13 }}><Bot size={17} /></div><h2 className="panel-title">Ask your people data</h2><p className="panel-subtitle">Ask in your own words about current employees, service requests, onboarding progress, deadlines, or task owners. Answers use the latest database records.</p></div><span className="status-pill status-completed">HR Admin only</span></div><form onSubmit={ask} className="modal-form"><label className="form-label">Your question<textarea className="textarea-field" value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="For example: Which requests are still open in Bangladesh?" maxLength={500} /></label><div className="smart-query-examples">{examples.map((example) => <button type="button" key={example} className="button secondary" onClick={() => setQuestion(example)}>{example}</button>)}</div>{error && <p className="form-error">{error}</p>}<div><button className="button primary" disabled={busy || question.trim().length < 5}><Sparkles size={15} />{busy ? "Checking current records…" : "Ask assistant"}</button></div></form>{answer && <div className="smart-query-answer"><div className="insight-kicker"><Bot size={14} />AI answer · Groq</div><AnswerContent answer={answer.answer} />{resultRows.length > 0 && resultColumns.length > 0 && <div className="smart-query-data"><div className="smart-query-data-heading"><div><h3>Verified live data</h3><p>These rows come directly from the current database.</p></div><span className="status-pill status-in_progress">{resultRows.length} {resultRows.length === 1 ? "row" : "rows"}</span></div><div className="table-wrap"><table className="request-table"><thead><tr>{resultColumns.map((column) => <th key={column}>{columnLabel(column)}</th>)}</tr></thead><tbody>{resultRows.map((row, index) => <tr key={index}>{resultColumns.map((column) => <td key={column}>{renderResultValue(column, row[column])}</td>)}</tr>)}</tbody></table></div></div>}<p className="request-meta">Source: {answer.sources.join(" ")}</p></div>}<p className="login-help"><CircleHelp size={14} />For the clearest answer, include a person, country, department, request status, or priority.</p></section></div>;
 }

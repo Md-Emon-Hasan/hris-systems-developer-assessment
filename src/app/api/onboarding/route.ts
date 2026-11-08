@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { getCurrentUser } from "@/lib/auth/session";
 import { apiError } from "@/lib/auth/permissions";
@@ -61,8 +62,16 @@ export async function POST(request: Request) {
         if (dependsOnId) await tx.onboardingTask.update({ where: { id: taskBySource.get(task.id)! }, data: { dependsOnId } });
       }
       return tx.onboarding.findUnique({ where: { id: created.id }, include: { tasks: true } });
-    });
+    }, { timeout: 8_000 });
     const unassignedTasks = instance?.tasks.filter((task) => task.ownerId === null).length ?? 0;
     return NextResponse.json({ data: instance, meta: { unassignedTasks } }, { status: 201 });
-  } catch (error) { return apiError(error); }
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      if (error.code === "P2002") return NextResponse.json({ error: { code: "ALREADY_ASSIGNED", message: "This employee already has an active onboarding plan. Refresh the page and choose another employee." } }, { status: 409 });
+      if (error.code === "P2003") return NextResponse.json({ error: { code: "STALE_ASSIGNMENT", message: "The employee, template, or one of its tasks changed. Refresh the page and try again." } }, { status: 409 });
+      if (error.code === "P2025") return NextResponse.json({ error: { code: "STALE_ASSIGNMENT", message: "The selected employee or template is no longer available. Refresh the page and try again." } }, { status: 409 });
+      if (error.code === "P2028") return NextResponse.json({ error: { code: "ASSIGNMENT_TIMEOUT", message: "Creating this checklist took too long. Please retry; no partial onboarding plan was saved." } }, { status: 503 });
+    }
+    return apiError(error);
+  }
 }
