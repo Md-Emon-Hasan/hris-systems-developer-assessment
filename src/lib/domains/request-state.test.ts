@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canTransitionTask, dependencyBlocksTask, transitionRequest } from "./request-state";
+import { canTransitionTask, canUpdateTaskStatus, dependencyBlocksTask, transitionRequest } from "./request-state";
 
 describe("service request transitions", () => {
   const request = { status: "ASSIGNED", requesterId: "employee-1", assigneeId: "manager-1" };
@@ -35,5 +35,13 @@ describe("onboarding dependencies", () => {
     expect(canTransitionTask("IN_PROGRESS", "COMPLETED", "MANAGER", null)).toBe(true);
     expect(canTransitionTask("COMPLETED", "IN_PROGRESS", "MANAGER", null, "reopen")).toBe(false);
     expect(canTransitionTask("COMPLETED", "IN_PROGRESS", "HR_ADMIN", null, "Work needs correction")).toBe(true);
+  });
+
+  it("uses task ownership for execution and limits HR to audited reopening", () => {
+    const task = { ownerId: "employee-1", status: "NOT_STARTED" };
+    expect(canUpdateTaskStatus({ id: "manager-1", role: "MANAGER" }, task, "IN_PROGRESS")).toBe(false);
+    expect(canUpdateTaskStatus({ id: "employee-1", role: "EMPLOYEE" }, task, "IN_PROGRESS")).toBe(true);
+    expect(canUpdateTaskStatus({ id: "hr-1", role: "HR_ADMIN" }, task, "COMPLETED")).toBe(false);
+    expect(canUpdateTaskStatus({ id: "hr-1", role: "HR_ADMIN" }, { ...task, status: "COMPLETED" }, "IN_PROGRESS", "Correction required")).toBe(true);
   });
 });

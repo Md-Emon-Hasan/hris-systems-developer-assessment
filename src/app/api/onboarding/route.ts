@@ -13,12 +13,14 @@ export async function GET(request: Request) {
     const onlyMyTasks = new URL(request.url).searchParams.get("myTasks") === "true";
     const scope = user.role === "HR_ADMIN" ? {} : user.role === "MANAGER" ? { OR: [{ employee: { managerId: user.id } }, { tasks: { some: { ownerId: user.id } } }] } : { OR: [{ employeeId: user.id }, { tasks: { some: { ownerId: user.id } } }] };
     const records = await prisma.onboarding.findMany({
-      where: { ...scope, status: "IN_PROGRESS", ...(onlyMyTasks && user.role !== "HR_ADMIN" ? { tasks: { some: { ownerId: user.id } } } : {}) },
-      include: { employee: { select: { id: true, fullName: true, country: true, department: true, joiningDate: true, managerId: true } }, template: { select: { id: true, name: true } }, tasks: { include: { owner: { select: { id: true, fullName: true } }, dependsOn: { select: { id: true, title: true, status: true } } }, orderBy: { dueDate: "asc" } } }, orderBy: { startDate: "desc" },
+      where: { ...scope, ...(onlyMyTasks && user.role !== "HR_ADMIN" ? { tasks: { some: { ownerId: user.id } } } : {}) },
+      include: { employee: { select: { id: true, fullName: true, country: true, department: true, joiningDate: true, managerId: true } }, template: { select: { id: true, name: true } }, tasks: { include: { owner: { select: { id: true, fullName: true } }, sourceTask: { select: { ownerRole: true } }, dependsOn: { select: { id: true, title: true, status: true } } }, orderBy: { dueDate: "asc" } } }, orderBy: { startDate: "desc" },
     });
     const data = records.map((r) => {
-      const ownOnly = onlyMyTasks || user.role === "EMPLOYEE" || (user.role === "MANAGER" && r.employee.managerId !== user.id);
-      return { ...r, tasks: ownOnly ? r.tasks.filter((t) => t.ownerId === user.id) : r.tasks };
+      const isOwnChecklist = r.employeeId === user.id;
+      const ownOnly = onlyMyTasks || (user.role === "EMPLOYEE" && !isOwnChecklist) || (user.role === "MANAGER" && r.employee.managerId !== user.id);
+      const tasks = ownOnly ? r.tasks.filter((t) => t.ownerId === user.id) : r.tasks;
+      return { ...r, tasks: tasks.map((task) => ({ ...task, ownerRole: task.sourceTask.ownerRole })) };
     });
     return NextResponse.json({ data });
   } catch (error) { return apiError(error); }
@@ -33,18 +35,25 @@ export async function POST(request: Request) {
     if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Choose an employee, template, and valid start date." } }, { status: 400 });
     const { employeeId, templateId, startDate } = parsed.data;
     const [employee, template, existing] = await Promise.all([
-      prisma.user.findUnique({ where: { id: employeeId }, select: { id: true, role: true, employmentStatus: true } }),
+      prisma.user.findUnique({ where: { id: employeeId }, select: { id: true, role: true, employmentStatus: true, country: true, managerId: true } }),
       prisma.onboardingTemplate.findUnique({ where: { id: templateId }, include: { tasks: { orderBy: { sortOrder: "asc" } } } }),
       prisma.onboarding.findFirst({ where: { employeeId, status: "IN_PROGRESS" } }),
     ]);
     if (!employee || employee.role === "HR_ADMIN" || employee.employmentStatus === "INACTIVE" || !template?.active) return NextResponse.json({ error: { code: "NOT_FOUND", message: "Active employee or template not found." } }, { status: 404 });
     if (existing) return NextResponse.json({ error: { code: "ALREADY_ASSIGNED", message: "This employee already has an active onboarding." } }, { status: 409 });
+    const candidates = await prisma.user.findMany({ where: { employmentStatus: "ACTIVE" }, select: { id: true, role: true, department: true, country: true } });
+    const manager = employee.managerId ? candidates.find((person) => person.id === employee.managerId) : undefined;
+    const resolveOwner = (task: typeof template.tasks[number]) => {
+      if (task.ownerRole === "MANAGER" && manager?.department === task.department) return manager.id;
+      const matching = candidates.filter((person) => person.role === task.ownerRole && person.department === task.department && (task.ownerRole === "HR_ADMIN" || person.country === employee.country));
+      return matching.length === 1 ? matching[0]!.id : null;
+    };
     const start = new Date(`${startDate}T00:00:00.000Z`);
     const instance = await prisma.$transaction(async (tx) => {
       await tx.user.update({ where: { id: employeeId }, data: { joiningDate: start } });
       const created = await tx.onboarding.create({ data: { employeeId, templateId, createdById: user.id, startDate: start, tasks: { create: template.tasks.map((task) => ({
         templateTaskId: task.id, title: task.title, description: task.description, department: task.department, dueOffsetDays: task.dueOffsetDays,
-        dueDate: new Date(start.getTime() + task.dueOffsetDays * 86400000), ownerId: null, status: "NOT_STARTED",
+        dueDate: new Date(start.getTime() + task.dueOffsetDays * 86400000), ownerId: resolveOwner(task), status: task.dependsOnId ? "BLOCKED" : "NOT_STARTED",
       })) } }, include: { tasks: true } });
       const taskBySource = new Map(created.tasks.map((t) => [t.templateTaskId, t.id]));
       for (const task of template.tasks) if (task.dependsOnId) {
@@ -53,6 +62,7 @@ export async function POST(request: Request) {
       }
       return tx.onboarding.findUnique({ where: { id: created.id }, include: { tasks: true } });
     });
-    return NextResponse.json({ data: instance }, { status: 201 });
+    const unassignedTasks = instance?.tasks.filter((task) => task.ownerId === null).length ?? 0;
+    return NextResponse.json({ data: instance, meta: { unassignedTasks } }, { status: 201 });
   } catch (error) { return apiError(error); }
 }

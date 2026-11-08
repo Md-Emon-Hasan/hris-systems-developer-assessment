@@ -24,17 +24,20 @@ export async function POST(request: Request) {
     const parsed = templateSchema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Check the template details and tasks." } }, { status: 400 });
     for (const [index, task] of parsed.data.tasks.entries()) if (task.dependsOnIndex !== undefined && task.dependsOnIndex !== null && task.dependsOnIndex >= index) return NextResponse.json({ error: { code: "INVALID_DEPENDENCY", message: "Each task can depend only on an earlier task." } }, { status: 400 });
-    const template = await prisma.onboardingTemplate.create({
-      data: {
-        name: parsed.data.name, description: parsed.data.description, createdById: user.id,
-        tasks: { create: parsed.data.tasks.map((task, index) => ({
-          title: task.title, description: task.description, department: task.department,
-          ownerRole: task.ownerRole, dueOffsetDays: task.dueOffsetDays, sortOrder: index + 1,
-        })) },
-      },
-      include: { tasks: { orderBy: { sortOrder: "asc" } } },
+    const template = await prisma.$transaction(async (tx) => {
+      const created = await tx.onboardingTemplate.create({
+        data: {
+          name: parsed.data.name, description: parsed.data.description, createdById: user.id,
+          tasks: { create: parsed.data.tasks.map((task, index) => ({
+            title: task.title, description: task.description, department: task.department,
+            ownerRole: task.ownerRole, dueOffsetDays: task.dueOffsetDays, sortOrder: index + 1,
+          })) },
+        },
+        include: { tasks: { orderBy: { sortOrder: "asc" } } },
+      });
+      for (const [index, task] of parsed.data.tasks.entries()) if (task.dependsOnIndex !== undefined && task.dependsOnIndex !== null) await tx.templateTask.update({ where: { id: created.tasks[index]!.id }, data: { dependsOnId: created.tasks[task.dependsOnIndex]!.id } });
+      return tx.onboardingTemplate.findUnique({ where: { id: created.id }, include: { tasks: { orderBy: { sortOrder: "asc" } } } });
     });
-    for (const [index, task] of parsed.data.tasks.entries()) if (task.dependsOnIndex !== undefined && task.dependsOnIndex !== null) await prisma.templateTask.update({ where: { id: template.tasks[index]!.id }, data: { dependsOnId: template.tasks[task.dependsOnIndex]!.id } });
     return NextResponse.json({ data: template }, { status: 201 });
   } catch (error) { return apiError(error); }
 }

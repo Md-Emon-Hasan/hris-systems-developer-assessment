@@ -1,6 +1,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { getCurrentUser, type CurrentUser, type UserRole } from "./session";
+import { canAccessRequest } from "@/lib/domains/request-access";
 
 export async function requireUser(): Promise<CurrentUser> {
   const user = await getCurrentUser();
@@ -18,6 +19,8 @@ export function isScopedTo(user: CurrentUser, owner: { id: string; managerId: st
   return user.role === "HR_ADMIN" || owner.id === user.id ||
     (user.role === "MANAGER" && owner.managerId === user.id);
 }
+
+export { canAccessRequest };
 
 export function apiError(error: unknown): NextResponse {
   if (error instanceof Response) {

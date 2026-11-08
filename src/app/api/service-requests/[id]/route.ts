@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/prisma";
 import { getCurrentUser } from "@/lib/auth/session";
-import { apiError, isScopedTo } from "@/lib/auth/permissions";
+import { apiError, canAccessRequest } from "@/lib/auth/permissions";
 import { transitionSchema } from "@/lib/validation/schemas";
 import { transitionRequest } from "@/lib/domains/request-state";
 
@@ -13,7 +13,7 @@ export async function GET(_request: Request, context: Context) {
     if (!user) return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Sign in required." } }, { status: 401 });
     const { id } = await context.params;
     const item = await prisma.serviceRequest.findUnique({ where: { id }, include: { requester: { select: { id: true, fullName: true, country: true, department: true, managerId: true } }, assignee: { select: { id: true, fullName: true } }, comments: { include: { author: { select: { id: true, fullName: true } } }, orderBy: { createdAt: "asc" } }, history: { orderBy: { createdAt: "asc" } } } });
-    if (!item || !isScopedTo(user, item.requester)) return NextResponse.json({ error: { code: "NOT_FOUND", message: "Request not found." } }, { status: 404 });
+    if (!item || !canAccessRequest(user, item)) return NextResponse.json({ error: { code: "NOT_FOUND", message: "Request not found." } }, { status: 404 });
     return NextResponse.json({ data: item });
   } catch (error) { return apiError(error); }
 }
@@ -26,13 +26,14 @@ export async function PATCH(request: Request, context: Context) {
     const parsed = transitionSchema.safeParse(await request.json());
     if (!parsed.success) return NextResponse.json({ error: { code: "INVALID_INPUT", message: "Invalid transition." } }, { status: 400 });
     const current = await prisma.serviceRequest.findUnique({ where: { id }, include: { requester: true } });
-    if (!current || !isScopedTo(user, current.requester)) return NextResponse.json({ error: { code: "NOT_FOUND", message: "Request not found." } }, { status: 404 });
+    if (!current || !canAccessRequest(user, current)) return NextResponse.json({ error: { code: "NOT_FOUND", message: "Request not found." } }, { status: 404 });
     const { action, assigneeId, note } = parsed.data;
     let targetAssignee: string | undefined;
     if (action === "ASSIGN") {
       if (!(["MANAGER", "HR_ADMIN"] as string[]).includes(user.role) || !assigneeId) return NextResponse.json({ error: { code: "FORBIDDEN", message: "An authorized manager must select an assignee." } }, { status: 403 });
-      const assignee = await prisma.user.findUnique({ where: { id: assigneeId }, select: { id: true, employmentStatus: true } });
+      const assignee = await prisma.user.findUnique({ where: { id: assigneeId }, select: { id: true, employmentStatus: true, managerId: true } });
       if (!assignee || assignee.employmentStatus !== "ACTIVE") return NextResponse.json({ error: { code: "INVALID_ASSIGNEE", message: "Choose an active employee." } }, { status: 400 });
+      if (user.role === "MANAGER" && assignee.managerId !== user.id) return NextResponse.json({ error: { code: "INVALID_ASSIGNEE", message: "Managers can assign requests only to their direct reports." } }, { status: 403 });
       targetAssignee = assigneeId;
     }
     const decision = transitionRequest(current, user, action, targetAssignee, note);

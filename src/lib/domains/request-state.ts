@@ -39,3 +39,8 @@ export function canTransitionTask(from: string, to: string, role: string, depend
   if (from === "BLOCKED" && to === "NOT_STARTED") return !prerequisiteIncomplete;
   return from === "COMPLETED" && to === "IN_PROGRESS" && role === "HR_ADMIN" && Boolean(note?.trim());
 }
+
+export function canUpdateTaskStatus(actor: { id: string; role: string }, task: { ownerId: string | null; status: string }, nextStatus: string, note?: string): boolean {
+  if (task.ownerId === actor.id) return true;
+  return actor.role === "HR_ADMIN" && task.status === "COMPLETED" && nextStatus === "IN_PROGRESS" && Boolean(note?.trim());
+}

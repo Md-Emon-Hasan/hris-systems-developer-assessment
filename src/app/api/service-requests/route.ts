@@ -4,6 +4,11 @@ import { getCurrentUser } from "@/lib/auth/session";
 import { apiError } from "@/lib/auth/permissions";
 import { requestSchema } from "@/lib/validation/schemas";
 
+const statuses = ["SUBMITTED", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "CLOSED"] as const;
+const categories = ["IT_EQUIPMENT", "SOFTWARE_ACCESS", "HR_QUERY", "FACILITIES", "OTHER"] as const;
+const priorities = ["LOW", "MEDIUM", "HIGH", "URGENT"] as const;
+const countries = ["Bangladesh", "Malaysia", "Sri Lanka", "Cyprus"] as const;
+
 export async function GET(request: Request) {
   try {
     const user = await getCurrentUser();
@@ -13,8 +18,15 @@ export async function GET(request: Request) {
     const category = url.searchParams.get("category");
     const priority = url.searchParams.get("priority");
     const country = url.searchParams.get("country");
+    if ((status && !statuses.includes(status as typeof statuses[number])) || (category && !categories.includes(category as typeof categories[number])) || (priority && !priorities.includes(priority as typeof priorities[number])) || (country && !countries.includes(country as typeof countries[number]))) {
+      return NextResponse.json({ error: { code: "INVALID_FILTER", message: "One or more request filters are invalid." } }, { status: 400 });
+    }
+    if (country && user.role !== "HR_ADMIN") return NextResponse.json({ error: { code: "FORBIDDEN", message: "Country filtering is available to HR Admin only." } }, { status: 403 });
+    const scope = user.role === "HR_ADMIN" ? {} : user.role === "MANAGER"
+      ? { OR: [{ requesterId: user.id }, { requester: { managerId: user.id } }, { assigneeId: user.id }] }
+      : { OR: [{ requesterId: user.id }, { assigneeId: user.id }] };
     const where = {
-      ...(user.role === "EMPLOYEE" ? { requesterId: user.id } : user.role === "MANAGER" ? { requester: { managerId: user.id } } : {}),
+      ...scope,
       ...(status ? { status } : {}), ...(category ? { category } : {}), ...(priority ? { priority } : {}),
       ...(country && user.role === "HR_ADMIN" ? { requester: { country } } : {}),
     };

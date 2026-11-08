@@ -1,12 +1,22 @@
 import { PrismaClient } from "@prisma/client";
 import argon2 from "argon2";
+import { seedAction } from "../src/lib/domains/seed-safety";
 
 const prisma = new PrismaClient();
 const countries = ["Bangladesh", "Malaysia", "Sri Lanka", "Cyprus"];
 const departments = ["Engineering", "People & Culture", "Finance", "Marketing"];
 const names = [
   "Aisha Rahman", "Tan Wei Ming", "Nadeesha Perera", "Elena Georgiou", "Arif Hossain", "Mei Ling Tan", "Kavindu Silva", "Andreas Nicolaou", "Farhana Islam", "Nur Aisyah", "Ishara Fernando", "Maria Christou", "Rafiul Karim", "Daniel Wong", "Tharushi Jayawardena", "Andri Hadjicosta", "Sadia Akter", "Amirul Hakim", "Sahan Wickramasinghe", "Eleni Michael", "Imran Chowdhury", "Chong Kai", "Dinithi Gunasekara", "Petros Antoniou", "Nusrat Jahan", "Siti Nur", "Lakshan Fernando", "Katerina Ioannou", "Mahmudul Hasan", "Lim Jia Hui", "Piumi Rathnayake", "Christos Savva", "Tania Sultana", "Faris Aziz", "Ruwan Senanayake", "Alexandros Panayi", "Jannatul Ferdous", "Leong Jun", "Anushka Dias", "Sophia Georgiou", "Saif Ahmed", "Syafiq Roslan", "Mihiri Abeysekara", "Andreas Christodoulou", "Maliha Khan", "Chua Wen", "Dulani Senanayake", "Nikos Petrou", "Samiha Tasnim", "Fatin Nabila", "Charith Fernando", "Anna Kyriakou", "Rakibul Islam", "Koh Zhi", "Sachini Perera", "Marios Andreou", "Tasnim Ahmed", "Aiman Iskandar", "Hasini Silva", "Elias Georgiou", "Sabbir Hossain", "Nurul Izzah", "Kasun Perera", "Marina Loizou", "Nabila Rahman", "Jason Teo", "Nimali Fernando", "Stavros Ioannou", "Abdullah Al Mamun", "Afiqah Zainal", "Dinuka Perera", "Christina Demetriou", "Jubayer Ahmed", "Lee Xin", "Sanduni Silva", "Michalis Georgiou", "Sabrina Islam", "Irfan Hakim", "Chathura Silva", "Andria Constantinou", "Shakib Hasan", "Nur Syazwani", "Kavisha Fernando", "Yiannis Michael", "Rumana Akter", "Zulkifli Omar", "Praveen Kumar", "Maria Andreou", "Emon Hossain", "Michelle Lim", "Anjali Perera", "Constantinos Loizou", "Sanjida Islam", "Haziq Rahman", "Nethmi Silva", "Dimitra Pappas", "Fahim Rahman", "Amelia Tan", "Thilini Perera", "Pavlos Georgiou",
+  "Siti Amina", "Ruwan Wijesinghe", "Andreas Kyriakou", "Nadia Karim", "Lim Wei Jie", "Thilak Perera", "Eleni Christou", "Faridah Hassan", "Kamal Hossain",
 ];
+const emailDomain = "nextventures.example";
+const employeeEmail = (fullName: string) => `${fullName.toLowerCase().replaceAll(" ", ".")}@${emailDomain}`;
+const employeeNumber = (fullName: string, sequence: number) => {
+  const parts = fullName.split(" ");
+  const firstName = parts[0]!;
+  const lastName = parts[parts.length - 1]!;
+  return `NV-${firstName[0]}${lastName[0]}-${String(sequence).padStart(4, "0")}`.toUpperCase();
+};
 const categories = ["IT_EQUIPMENT", "SOFTWARE_ACCESS", "HR_QUERY", "FACILITIES", "OTHER"];
 const priorities = ["LOW", "MEDIUM", "HIGH", "URGENT"];
 const statuses = ["SUBMITTED", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "CLOSED"];
@@ -24,15 +34,16 @@ const taskSpecs = [
 ] as const;
 
 async function main() {
-  const passwordHash = await argon2.hash("Welcome2026!", { type: argon2.argon2id });
-  await prisma.$transaction([
-    prisma.requestComment.deleteMany(), prisma.requestStatusHistory.deleteMany(), prisma.serviceRequest.deleteMany(),
-    prisma.onboardingTask.deleteMany(), prisma.onboarding.deleteMany(), prisma.templateTask.deleteMany(),
-    prisma.onboardingTemplate.deleteMany(), prisma.authSession.deleteMany(), prisma.user.deleteMany(),
+  const [existingUsers, existingRequests, existingPlans, existingTemplates] = await Promise.all([
+    prisma.user.count(), prisma.serviceRequest.count(), prisma.onboarding.count(), prisma.onboardingTemplate.count(),
   ]);
+  const seededAdmin = await prisma.user.findUnique({ where: { email: employeeEmail("Mira Chowdhury") }, select: { id: true } });
+  const action = seedAction({ users: existingUsers, requests: existingRequests, onboardings: existingPlans, templates: existingTemplates, hasAssessmentAdmin: Boolean(seededAdmin) });
+  if (action === "skip") { console.info("Assessment seed already exists; leaving all database records unchanged."); return; }
+  const passwordHash = await argon2.hash("Welcome2026!", { type: argon2.argon2id });
   const createdUsers = [];
   const admin = await prisma.user.create({ data: {
-    email: "hr.admin@northstar.example", passwordHash, fullName: "Mira Chowdhury", employeeNumber: "NS-0001",
+    email: employeeEmail("Mira Chowdhury"), passwordHash, fullName: "Mira Chowdhury", employeeNumber: employeeNumber("Mira Chowdhury", 1),
     country: "Bangladesh", department: "People & Culture", role: "HR_ADMIN", employmentStatus: "ACTIVE", joiningDate: new Date("2020-01-15T00:00:00Z"),
   } });
   createdUsers.push(admin);
@@ -41,18 +52,18 @@ async function main() {
     const country = countries[i % countries.length];
     const department = departments[i % departments.length];
     const m = await prisma.user.create({ data: {
-      email: `manager${i + 1}@northstar.example`, passwordHash, fullName: names[i], employeeNumber: `NS-${String(i + 2).padStart(4, "0")}`,
+      email: employeeEmail(names[i]), passwordHash, fullName: names[i], employeeNumber: employeeNumber(names[i], i + 2),
       country, department, role: "MANAGER", employmentStatus: "ACTIVE", joiningDate: new Date("2022-02-01T00:00:00Z"), managerId: admin.id,
     } });
     managers.push(m); createdUsers.push(m);
   }
-  for (let i = 9; i < 100; i++) {
+  for (let i = 9; i < 109; i++) {
     const department = departments[(i - 9) % departments.length];
     const country = countries[Math.floor((i - 9) / 4) % countries.length];
     const employmentStatus = i % 29 === 0 ? "ON_PROBATION" : i % 37 === 0 ? "ON_NOTICE" : "ACTIVE";
     const user = await prisma.user.create({ data: {
-      email: `employee${String(i + 1).padStart(3, "0")}@northstar.example`, passwordHash, fullName: names[i],
-      employeeNumber: `NS-${String(i + 2).padStart(4, "0")}`, country, department, role: "EMPLOYEE", employmentStatus,
+      email: employeeEmail(names[i]), passwordHash, fullName: names[i],
+      employeeNumber: employeeNumber(names[i], i + 2), country, department, role: "EMPLOYEE", employmentStatus,
       joiningDate: new Date("2021-03-01T00:00:00Z"), managerId: managers[(i - 9) % managers.length]!.id,
     } });
     createdUsers.push(user);
@@ -98,13 +109,17 @@ async function main() {
   const hires = employees.slice(20, 27);
   for (let h = 0; h < hires.length; h++) {
     const employee = hires[h]!;
-    const startDate = new Date(Date.now() - (48 - h * 5) * day);
+    const startDate = new Date(Date.now() - (48 - h * 3) * day);
     await prisma.user.update({ where: { id: employee.id }, data: { joiningDate: startDate } });
     const onboarding = await prisma.onboarding.create({ data: { employeeId: employee.id, templateId: template.id, createdById: admin.id, startDate } });
     const tasks = [];
     for (let idx = 0; idx < taskSpecs.length; idx++) {
       const spec = taskSpecs[idx]!;
-      const status = idx < 3 ? "COMPLETED" : idx === 3 ? (h % 3 === 0 ? "COMPLETED" : "IN_PROGRESS") : idx === 4 ? (h % 3 === 0 ? "IN_PROGRESS" : "BLOCKED") : idx === 5 ? (h % 2 === 0 ? "IN_PROGRESS" : "NOT_STARTED") : "NOT_STARTED";
+      const onboardingStatuses = ["COMPLETED", "COMPLETED", "COMPLETED", h % 3 === 0 ? "COMPLETED" : "IN_PROGRESS", h % 3 === 0 ? "IN_PROGRESS" : "BLOCKED", h % 3 === 0 ? (h % 2 === 0 ? "IN_PROGRESS" : "NOT_STARTED") : "BLOCKED", "NOT_STARTED", "NOT_STARTED", "NOT_STARTED", "NOT_STARTED"] as const;
+      const desiredStatus = onboardingStatuses[idx] ?? "NOT_STARTED";
+      const dependencyIndex = spec[5] === null ? null : spec[5] - 1;
+      const dependencyStatus = dependencyIndex === null ? null : onboardingStatuses[dependencyIndex];
+      const status = dependencyStatus && dependencyStatus !== "COMPLETED" ? "BLOCKED" : desiredStatus;
       const manager = managers.find((m) => m.department === spec[2]) ?? managers[0]!;
       tasks.push(await prisma.onboardingTask.create({ data: {
         onboardingId: onboarding.id, templateTaskId: templateTasks[idx]!.id, title: spec[0], description: spec[1], department: spec[2],
@@ -116,7 +131,7 @@ async function main() {
       await prisma.onboardingTask.update({ where: { id: tasks[idx]!.id }, data: { dependsOnId: tasks[taskSpecs[idx]![5] as number - 1]!.id } });
     }
   }
-  console.info(`Seed complete: ${createdUsers.length} employees, 36 requests, ${hires.length} onboardings.`);
+  console.info(`Seed complete: ${employees.length} employees across ${createdUsers.length} user accounts, 36 requests, ${hires.length} onboardings.`);
 }
 
 main().catch((error: unknown) => { console.error(error); process.exitCode = 1; }).finally(async () => prisma.$disconnect());
