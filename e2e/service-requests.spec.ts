@@ -136,6 +136,7 @@ test("manager can monitor direct-report onboarding but only the task owner can e
     const assigned = (await assignedResponse.json()).data;
     const employeeTask = assigned.tasks[2];
     const ownerResponse = await fetch(`/api/onboarding/tasks/${employeeTask.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ownerId: hire.id }) });
+    await ownerResponse.json();
     return { hireId: hire.id, managerEmail: manager.email, planId: assigned.id, employeeTaskId: employeeTask.id, statuses: [templateResponse.status, assignedResponse.status, ownerResponse.status] };
   });
   expect(setup?.statuses).toEqual([201, 201, 200]);
@@ -151,7 +152,7 @@ test("manager can monitor direct-report onboarding but only the task owner can e
 });
 
 test("employee can view every task in their own onboarding checklist", async ({ page }) => {
-  await signIn(page, "employee030@nextventures.example", 23);
+  await signIn(page, "lim.jia.hui@nextventures.example", 23);
   const result = await page.evaluate(async () => {
     const [response, sessionResponse] = await Promise.all([fetch("/api/onboarding"), fetch("/api/auth/session")]);
     const body = await response.json();
@@ -234,7 +235,7 @@ test("manager assigns a team request and the employee moves it through resolutio
   await expect(page.locator(".modal .status-pill")).toContainText("Closed");
   expect(await page.evaluate(async (id) => (await fetch(`/api/service-requests/${id}`)).status, assignment!.requestId)).toBe(200);
   await page.evaluate(async () => { await fetch("/api/auth/logout", { method: "POST" }); });
-  await signIn(page, "employee011@nextventures.example", 38);
+  await signIn(page, "lim.jia.hui@nextventures.example", 38);
   expect(await page.evaluate(async (id) => (await fetch(`/api/service-requests/${id}`)).status, assignment!.requestId)).toBe(404);
 });
 
@@ -297,14 +298,14 @@ test("onboarding tasks stay blocked until their dependency is complete", async (
   await signIn(page, "mira.chowdhury@nextventures.example", 26);
   const setup = await page.evaluate(async () => {
     const users = (await (await fetch("/api/users")).json()).data as TestPerson[];
-    const hire = users.find((person) => person.email === "employee011@nextventures.example");
+    const hire = users.find((person) => person.email === "sadia.akter@nextventures.example");
     if (!hire) return null;
     const tasks = Array.from({ length: 8 }, (_, index) => ({ title: `Dependency workflow ${index + 1}`, description: `Verify dependency workflow task ${index + 1} follows the prerequisite.`, department: hire.department, ownerRole: "MANAGER", dueOffsetDays: index, dependsOnIndex: index === 1 ? 0 : null }));
     const templateResponse = await fetch("/api/onboarding/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: `Dependency workflow ${Date.now()}`, description: "Owner-driven dependency regression.", tasks }) });
     const template = (await templateResponse.json()).data;
     const assignedResponse = await fetch("/api/onboarding", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ employeeId: hire.id, templateId: template.id, startDate: new Date().toISOString().slice(0, 10) }) });
     const plan = (await assignedResponse.json()).data;
-    return { managerEmail: users.find((person) => person.id === hire.managerId)?.email, planId: plan.id, prerequisiteId: plan.tasks[0].id, dependentId: plan.tasks[1].id, statuses: [templateResponse.status, assignedResponse.status] };
+    return { managerEmail: users.find((person) => person.id === hire.managerId)?.email, employeeEmail: hire.email, planId: plan.id, prerequisiteId: plan.tasks[0].id, dependentId: plan.tasks[1].id, statuses: [templateResponse.status, assignedResponse.status] };
   });
   expect(setup).not.toBeNull();
   await page.evaluate(async () => { await fetch("/api/auth/logout", { method: "POST" }); });
@@ -329,9 +330,11 @@ test("onboarding tasks stay blocked until their dependency is complete", async (
   expect([blockedInitially, prerequisiteStarted, prerequisiteCompleted, dependentStarted]).toEqual([409, 200, 200, 200]);
   expect(completion).toMatchObject({ planStatus: "COMPLETED", count: 8 });
   await page.evaluate(async () => { await fetch("/api/auth/logout", { method: "POST" }); });
-  await signIn(page, "employee011@nextventures.example", 53);
+  await signIn(page, setup!.employeeEmail, 53);
   const completedChecklist = await page.evaluate(async (planId) => {
-    const rows = (await (await fetch("/api/onboarding")).json()).data as TestPlan[];
+    const response = await fetch("/api/onboarding");
+    const body = await response.json();
+    const rows = body.data as TestPlan[];
     const plan = rows.find((item) => item.id === planId);
     return { status: plan?.status, taskCount: plan?.tasks.length, completedTasks: plan?.tasks.filter((task) => task.status === "COMPLETED").length };
   }, setup!.planId);
@@ -564,9 +567,10 @@ test("HR Admin adds a new employee and assigns an onboarding checklist through t
   await assignmentDialog.getByLabel("Checklist template").selectOption({ label: standardTemplate! });
   await assignmentDialog.getByLabel("Start date").fill(new Date().toISOString().slice(0, 10));
   await assignmentDialog.getByRole("button", { name: "Create plan", exact: true }).click();
-  await expect(page.getByRole("button").filter({ hasText: fullName })).toBeVisible();
-  await page.getByRole("button").filter({ hasText: fullName }).click();
-  await expect(page.getByText("Welcome and team introduction", { exact: true })).toBeVisible();
+  const createdPlan = page.locator(".onboarding-plan-card").filter({ hasText: `${fullName} · Bangladesh` });
+  await expect(createdPlan).toBeVisible();
+  await createdPlan.getByRole("button", { name: `Show onboarding tasks for ${fullName}` }).click();
+  await expect(createdPlan.getByText("Welcome and team introduction", { exact: true })).toBeVisible();
   const persisted = await page.evaluate(async (employeeId) => {
     const plans = (await (await fetch("/api/onboarding")).json()).data as TestPlan[];
     const plan = plans.find((item) => item.employee.id === employeeId);
@@ -575,7 +579,7 @@ test("HR Admin adds a new employee and assigns an onboarding checklist through t
   expect(persisted.taskCount).toBeGreaterThanOrEqual(8);
   await page.reload();
   await page.getByRole("button", { name: "Onboarding", exact: true }).click();
-  await expect(page.getByRole("button").filter({ hasText: fullName })).toBeVisible();
+  await expect(page.locator(".onboarding-plan-card").filter({ hasText: `${fullName} · Bangladesh` })).toBeVisible();
 });
 
 test("workspace has no page-level horizontal overflow at assessment viewport widths", async ({ page }) => {
@@ -610,5 +614,5 @@ test("HR Admin AI query reflects a service request created in the same session",
   await page.getByRole("button", { name: "Smart query", exact: true }).click();
   await page.getByLabel("Your question").fill("How many urgent requests are still open?");
   await page.getByRole("button", { name: "Ask assistant" }).click();
-  await expect(page.locator(".insight-card")).toContainText("urgent open service requests");
+  await expect(page.locator(".smart-query-answer")).toContainText("urgent open service requests");
 });

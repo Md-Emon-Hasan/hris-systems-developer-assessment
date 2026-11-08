@@ -206,6 +206,7 @@ function OnboardingPlanCard({ row, role, userId, people, busy, notice, updateTas
 }
 
 function OnboardingView({ rows, loading, role, userId, refresh }: { rows: OnboardingItem[]; loading: boolean; role: string; userId: string; refresh: () => void }) {
+  const queryClient = useQueryClient();
   const [notice, setNotice] = useState(""); const [busy, setBusy] = useState(false); const [dialog, setDialog] = useState<"assign" | "template" | null>(null); const [editingTemplate, setEditingTemplate] = useState<TemplateOption | null>(null);
   const assignablePeople = useQuery({ queryKey: ["assignable-people"], queryFn: () => getData<Person[]>("/api/users"), enabled: role === "HR_ADMIN" || role === "MANAGER" });
   const templates = useQuery({ queryKey: ["templates"], queryFn: () => getData<TemplateOption[]>("/api/onboarding/templates"), enabled: role === "HR_ADMIN" });
@@ -225,17 +226,17 @@ function OnboardingView({ rows, loading, role, userId, refresh }: { rows: Onboar
       {rows.length === 0 ? <div className="empty-state">No onboarding plans are assigned in your scope.</div> : <div className="onboarding-plan-list">{rows.map((row) => <OnboardingPlanCard key={row.id} row={row} role={role} userId={userId} people={assignablePeople.data ?? []} busy={busy} notice={notice} updateTask={updateTask} />)}</div>}
       {role === "HR_ADMIN" && <div className="section-gap"><div className="panel-heading"><div><h3 className="panel-title">Checklist templates</h3><p className="panel-subtitle">{(templates.data ?? []).length} available templates</p></div></div>{(templates.data ?? []).map((template) => <div key={template.id} className="hire-row"><div><div className="hire-name">{template.name}</div><div className="hire-progress">{template.tasks.length} tasks · {template.description}</div></div><span className={`status-pill ${template.active ? "status-completed" : "status-closed"}`}>{template.active ? "Active" : "Archived"}</span><button aria-label={`Edit template ${template.name}`} className="button secondary" onClick={() => { setEditingTemplate(template); setDialog("template"); }}>Edit</button><button className="button secondary" onClick={() => void archiveTemplate(template.id, template.active)}>{template.active ? "Archive" : "Activate"}</button></div>)}</div>}
     </div>
-    {dialog === "assign" && <AssignOnboardingDialog people={assignablePeople.data ?? []} templates={(templates.data ?? []).filter((template) => template.active)} close={() => setDialog(null)} onDone={() => { setDialog(null); refresh(); void templates.refetch(); }} />}
+    {dialog === "assign" && <AssignOnboardingDialog people={assignablePeople.data ?? []} templates={(templates.data ?? []).filter((template) => template.active)} close={() => setDialog(null)} onDone={async () => { await queryClient.refetchQueries({ queryKey: ["onboarding"], type: "active" }); setDialog(null); void templates.refetch(); }} />}
     {dialog === "template" && <TemplateDialog initial={editingTemplate} close={() => setDialog(null)} onDone={() => { setDialog(null); setEditingTemplate(null); void templates.refetch(); }} />}
   </>;
 }
 
-function AssignOnboardingDialog({ people, templates, close, onDone }: { people: Person[]; templates: TemplateOption[]; close: () => void; onDone: () => void }) {
+function AssignOnboardingDialog({ people, templates, close, onDone }: { people: Person[]; templates: TemplateOption[]; close: () => void; onDone: () => Promise<void> }) {
   const [error, setError] = useState(""); const [busy, setBusy] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setBusy(true); setError(""); const values = new FormData(event.currentTarget);
     const response = await fetch("/api/onboarding", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ employeeId: values.get("employeeId"), templateId: values.get("templateId"), startDate: values.get("startDate") }) });
-    const body = await response.json(); setBusy(false); if (!response.ok) { setError(body.error?.message ?? "Could not assign onboarding."); return; } onDone();
+    const body = await response.json(); setBusy(false); if (!response.ok) { setError(body.error?.message ?? "Could not assign onboarding."); return; } await onDone();
   }
   return <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true"><div className="modal-header"><div><p className="eyebrow green">NEW HIRE</p><h2>Assign onboarding</h2></div><button className="button ghost" onClick={close}><X size={17} /></button></div><form className="modal-form" onSubmit={submit}>
     <label className="form-label">Employee<select className="select-field" style={{ height: 42 }} name="employeeId" required>{people.filter((p) => p.role === "EMPLOYEE" && p.employmentStatus !== "INACTIVE").map((p) => <option key={p.id} value={p.id}>{p.fullName} · {p.country}</option>)}</select></label>

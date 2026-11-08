@@ -107,9 +107,11 @@ async function main() {
     await prisma.templateTask.update({ where: { id: templateTasks[idx]!.id }, data: { dependsOnId: templateTasks[taskSpecs[idx]![5] as number - 1]!.id } });
   }
   const hires = employees.slice(20, 27);
+  const utcToday = new Date();
+  utcToday.setUTCHours(0, 0, 0, 0);
   for (let h = 0; h < hires.length; h++) {
     const employee = hires[h]!;
-    const startDate = new Date(Date.now() - (48 - h * 3) * day);
+    const startDate = new Date(utcToday.getTime() - (48 - h * 3) * day);
     await prisma.user.update({ where: { id: employee.id }, data: { joiningDate: startDate } });
     const onboarding = await prisma.onboarding.create({ data: { employeeId: employee.id, templateId: template.id, createdById: admin.id, startDate } });
     const tasks = [];

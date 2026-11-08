@@ -49,7 +49,7 @@ These credentials are for local assessment only. Change them before any public d
 
 ## Included assessment data
 
-The seed creates 109 user accounts: 100 Employee-role users, 8 Managers, and 1 HR Admin. The users are distributed across Bangladesh, Malaysia, Sri Lanka, and Cyprus and four departments. It also creates 36 service requests across five categories, all five request states and four priorities, five three-comment threads, one 10-task onboarding template, and seven onboarding plans with mixed task states, overdue tasks, and dependency-blocked tasks. Run `npm run verify:seed` to check the seeded dataset and each role count.
+The seed creates 109 user accounts: 100 Employee-role users, 8 Managers, and 1 HR Admin. The users are distributed across Bangladesh, Malaysia, Sri Lanka, and Cyprus and four departments. It also creates 36 service requests across five categories, all five request states and four priorities, five three-comment threads, one 10-task onboarding template, and seven onboarding plans with mixed task states, overdue tasks, and dependency-blocked tasks. Run `npm run verify:seed` for the local SQLite database or `npm run verify:seed:postgres` for the PostgreSQL database; the PostgreSQL command generates the matching client before checking the data.
 
 ## Workflows and access
 
@@ -81,7 +81,7 @@ Deployment is not complete yet. The PostgreSQL schema and initial migration are 
 
    ```powershell
    npm run db:setup:postgres
-   npm run verify:seed
+   npm run verify:seed:postgres
    npm run build:postgres
    ```
 
