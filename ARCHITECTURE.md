@@ -21,7 +21,7 @@ Next Ventures is a modular monolith. The browser renders a React client workspac
 
 ```mermaid
 flowchart LR
-  U[Browser: React workspace] -->|HTTP, session cookie| N[Next.js App Router]
+  U[Browser: React workspace] -->|HTTP, session cookie| N[Next.js App Router on Vercel]
   U -->|JSON, same-origin API| A[Route Handlers]
   N --> A
   A --> S[Session and RBAC checks]
@@ -32,20 +32,20 @@ flowchart LR
   R --> P[Prisma]
   O --> P
   D --> P
-  P --> DB[(SQLite: local assessment)]
+  P -->|local development| DB[(SQLite)]
+  P -->|deployed application| PG[(Supabase PostgreSQL)]
   A --> Q[Smart Query]
   Q -->|fixed Prisma queries| P
   Q -. optional, validated intent / answer phrasing .-> G[Groq API]
-  DB -. production migration planned .-> PG[(Supabase PostgreSQL)]
 ```
 
 The service request and onboarding modules use the same `User` identity, reporting line, roles, and session. The unified dashboard shows headcount by country, open request counts by status and category (including a chart), onboarding progress and overdue work, plus a cross-module list of active onboarding hires with open IT equipment requests. Smart Query is a read-only HR Admin feature: an optional Groq call can map a question to a constrained query plan or phrase a verified result, while fixed Prisma code performs all data access and calculations.
 
-SQLite is the implemented assessment database. The repository also contains a PostgreSQL Prisma schema and migration, but no Supabase database has been connected and the app has not been deployed. A local SQLite file is not a shared persistent store for Vercel Functions.
+Local development uses SQLite. The deployed application runs on Vercel and connects through Prisma to Supabase PostgreSQL using the PostgreSQL schema and migration in `prisma/postgres/`. The hosted migration and assessment seed have been applied; `npm run verify:seed:postgres` verified 109 accounts, 36 service requests, and 7 onboarding plans. The local SQLite file is separate and is not copied to Supabase.
 
 ## 2. Data model
 
-All IDs are Prisma `String` CUIDs. `DateTime` values are stored as dates/timestamps and deadline calculations use UTC calendar days. Roles, statuses, categories, and priorities are stored as `String` fields in SQLite and constrained by application-level Zod/domain validation; they are not database enum types. `?` means nullable; `[]` means a one-to-many collection.
+All IDs are Prisma `String` CUIDs. `DateTime` values are stored as dates/timestamps and deadline calculations use UTC calendar days. Roles, statuses, categories, and priorities are stored as `String` fields in both SQLite and PostgreSQL and constrained by application-level Zod/domain validation; they are not database enum types. `?` means nullable; `[]` means a one-to-many collection.
 
 | Entity | Fields and types | Relations, constraints, and indexes |
 |---|---|---|
@@ -130,17 +130,16 @@ HR Admin alone changes task ownership. An owner must not be inactive and must ma
 
 ## 6. Trade-offs and next steps
 
-1. **SQLite for the assessment, PostgreSQL for hosted production.** SQLite keeps local setup and seeded review data simple. PostgreSQL is a better shared durable store for a multi-instance deployment. The current choice is SQLite for local assessment work; before a hosted launch, apply the maintained PostgreSQL schema/migration, migrate and verify data, configure secrets, and exercise the deployed flows. None of those production steps is complete yet.
+1. **SQLite locally, PostgreSQL for the hosted app.** SQLite keeps local setup simple, while Vercel's serverless instances need a shared durable database. The app therefore has provider-specific Prisma schemas and migrations. Supabase PostgreSQL is the deployed database and its assessment seed has been verified. Local SQLite records are intentionally not copied to the hosted database; both environments use generated assessment data.
 2. **Constrained AI query plans instead of model-written SQL.** Letting an LLM generate SQL is flexible but gives it unnecessary access to schema and query execution, and makes totals hard to trust. Smart Query uses typed intents/filters and fixed Prisma queries; the trade-off is that unsupported or ambiguous questions must be refused. With more time, expand query coverage through explicit intents and evaluation cases, not free-form SQL.
 3. **Application RBAC instead of database row-level security.** Route Handlers enforce role and record scope consistently for this single application. Database RLS would provide another defense layer, especially for multiple clients, but requires a different connection/auth model. For a larger team, add PostgreSQL RLS policies and an automated permission matrix.
 
 ## 7. Current limitations
 
 - The seed creates 109 user accounts: 100 Employee-role accounts, 8 Managers, and 1 HR Admin. The seed verifier checks each role count.
-- No deployed URL or hosted migration has been recorded yet. Supabase data must be migrated and verified before the app can serve production traffic.
-- The README provides local setup and demo credentials, but the required public deployment URL does not exist yet.
-- SQLite does not provide a shared durable database for Vercel Functions. Supabase has not been connected or migrated.
-- Smart Query covers only the intents listed in its query planner; payroll, attendance, leave-balance, and recruitment data are not present.
+- The deployed assessment URL is listed in the README. The current hosted database contains synthetic assessment data and is not intended for real employee records.
+- Smart Query covers the intents listed in its planner; payroll, attendance, leave-balance, and recruitment data are not present.
+- Login and Smart Query rate limits are process-local. A larger multi-instance production service should use a shared rate-limit store and add PostgreSQL row-level security as a further isolation layer.
 
 ## References
 

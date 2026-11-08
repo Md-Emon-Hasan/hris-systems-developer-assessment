@@ -17,8 +17,9 @@ Next Ventures is an HR operations platform for employee service requests and str
 ## Assessment submission status
 
 - **Source repository:** [GitHub](https://github.com/Md-Emon-Hasan/hris-systems-developer-assessment)
-- **Live platform URL:** Not deployed. The assessment requires a publicly accessible URL; local setup below is not a substitute.
-- **Database:** Seeded local SQLite for assessment development. Supabase/PostgreSQL has not been connected or migrated.
+- **Live platform URL:** [https://hris-systems-developer-assessment.vercel.app](https://hris-systems-developer-assessment.vercel.app)
+- **Hosting and database:** Vercel with Supabase PostgreSQL. The PostgreSQL migration and assessment seed have been applied and verified.
+- **Seed verification:** 109 accounts (100 Employees, 8 Managers, 1 HR Admin), 36 requests, and 7 onboarding plans; `npm run verify:seed:postgres` passes against the hosted database.
 
 ## Run locally
 
@@ -45,7 +46,7 @@ All seeded accounts use `Welcome2026!`.
 | Manager | `aisha.rahman@nextventures.example` |
 | Employee | `nur.aisyah@nextventures.example` |
 
-These credentials are for local assessment only. Change them before any public deployment.
+These are intentionally shared demo credentials for assessment review. The database contains synthetic assessment data only; do not use these accounts or this instance for real employee records.
 
 ## Included assessment data
 
@@ -63,8 +64,8 @@ Request and task transitions are validated by the server and recorded in history
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | Local SQLite URL; PostgreSQL is not configured. |
-| `DIRECT_URL` | PostgreSQL direct/session-pooler URL for Prisma migrations. Set only for the PostgreSQL setup described below. |
+| `DATABASE_URL` | Local SQLite URL; the deployed Vercel app uses the Supabase PostgreSQL transaction-pooler URL. |
+| `DIRECT_URL` | Supabase direct/session-pooler URL used by Prisma migrations. |
 | `GROQ_API_KEY` | Optional server-side Groq key for Smart Query planning and answer phrasing. Leave unset for built-in patterns. |
 | `GROQ_MODEL` | Optional Groq model ID; defaults to `openai/gpt-oss-20b`. |
 | `NEXT_PUBLIC_APP_URL` | Optional app origin; local default is `http://localhost:3000`. |
@@ -73,25 +74,11 @@ Keep real database credentials and AI keys in local or host-managed environment 
 
 ## Supabase and Vercel deployment
 
-Deployment is not complete yet. The PostgreSQL schema and initial migration are in `prisma/postgres/`; the deployed app must use Supabase PostgreSQL because Vercel's serverless instances do not share a persistent local SQLite file.
+The assessment platform is deployed at [https://hris-systems-developer-assessment.vercel.app](https://hris-systems-developer-assessment.vercel.app). Vercel builds the Next.js app with `npm run build:postgres`; its server-side Prisma Client uses the PostgreSQL schema in `prisma/postgres/`. Supabase PostgreSQL is seeded with the assessment data described above. The successful `npm run verify:seed:postgres` output confirms the hosted dataset, including all 100 Employee-role accounts, five request-comment threads, and seven onboarding plans with 10 tasks each.
 
-1. Create a Supabase PostgreSQL project. In its **Connect** panel, copy a direct connection URL (or the session-pooler URL if your migration machine cannot reach the direct IPv6 endpoint) for `DIRECT_URL`, and the transaction-pooler URL for `DATABASE_URL`.
-2. Update the local, ignored `.env` with those two values. Use the dashboard-provided URLs; percent-encode any reserved characters in the password. For the shared transaction pooler, use port `6543` and add Prisma's `pgbouncer=true` parameter. The PostgreSQL schema routes Prisma CLI migrations through `DIRECT_URL` and app queries through `DATABASE_URL`.
-3. On a new, empty Supabase database, apply the migration and seed, then verify the data and production build:
+The GitHub repository is connected to Vercel. Pushes to Vercel's configured production branch trigger a new production deployment; other branches create Preview deployments. For future database schema changes, apply committed migrations with `npm run db:migrate:postgres` before deploying code that depends on those changes. Do not re-run the setup seed against live data: it is intended for an empty assessment database and refuses unrelated partial data. Local SQLite setup and PostgreSQL deployment use separate databases; local records are not automatically copied to Supabase.
 
-   ```powershell
-   npm run db:setup:postgres
-   npm run verify:seed:postgres
-   npm run build:postgres
-   ```
-
-   `db:setup:postgres` generates the PostgreSQL Prisma client, applies committed migrations, and runs the demo seed. The seed refuses an unrelated populated database. These commands create a new seeded PostgreSQL database; they do not copy records from `prisma/dev.db`. If the SQLite records must be preserved, an explicit export/import process is required first.
-4. Import this GitHub repository into Vercel. Keep the Next.js framework preset and use the repository's configured Build Command, `npm run build:postgres`.
-5. Add `DATABASE_URL` and `DIRECT_URL` to the Vercel project as server-side environment variables. Add `GROQ_API_KEY` only if Smart Query should use Groq; `GROQ_MODEL` is optional. Use a separate Supabase project for Preview instead of pointing Preview deployments at production data. Deploy to a Preview URL first.
-6. On Preview, sign in with each demo role and check request creation/assignment/comments/transitions, template and onboarding assignment, task ownership/dependencies, dashboard data, Smart Query, and persistence after a new request. Check Vercel function logs and Supabase database logs for errors.
-7. After the Preview check, promote/deploy Production and add the public URL to the assessment submission and this README. Replace or reset demo passwords before using the application for real employee data.
-
-Supabase's transaction pooler is intended for serverless clients; Prisma requires `pgbouncer=true` with the shared transaction pooler. Migrations use a direct connection; if direct IPv6 is unavailable from your machine, use Supabase's session pooler for migrations.
+For a new environment, copy the Supabase transaction-pooler URL to `DATABASE_URL` (port `6543`, with Prisma's `pgbouncer=true` parameter), and use a direct or session-pooler URL for `DIRECT_URL`. Keep both values server-side. `GROQ_API_KEY` enables the optional Groq planning and response-phrasing steps in Smart Query; the deterministic database-query fallback remains available without it. A separate Supabase project is recommended for Preview if Preview testing must not modify the assessment dataset.
 
 ## Further documentation
 

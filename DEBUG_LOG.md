@@ -7,10 +7,10 @@ This log records three corrected defects, their root causes, the applied fixes, 
 ## Contents
 
 - [Assigned employees could not access service requests](#1-an-assigned-employee-could-not-access-a-service-request)
-- [Managers could update tasks they did not own](#2-a-manager-could-update-an-onboarding-task-they-did-not-own)
+- [Smart Query ignored an employee name in its fallback query](#2-smart-query-ignored-an-employee-name-in-its-fallback-query)
 - [Assessment seed could erase existing data](#3-running-the-assessment-seed-could-erase-existing-data)
 
-These are three corrected defects from the build. The notes below distinguish observed behavior, the code path checked, the cause, and the regression coverage. The tests listed here are present in the repository; this document does not claim they were run for this review.
+These are three corrected defects from development. Each entry records the user-visible symptom, investigation, cause, fix, and prevention. Existing tests are identified where they cover the behavior; prevention work that is not yet covered is described as a follow-up rather than claimed as completed.
 
 ## 1. An assigned employee could not access a service request
 
@@ -30,23 +30,29 @@ return principal.role === "HR_ADMIN" || request.requester.id === principal.id ||
 
 **Prevention.** `src/lib/domains/request-access.test.ts` covers requester, assignee, Manager, HR Admin, and unrelated-user access. Keep the same scope helper on every endpoint that reads or mutates a request.
 
-## 2. A Manager could update an onboarding task they did not own
+## 2. Smart Query ignored an employee name in its fallback query
 
-**Symptom.** A Manager could start or complete a task on a direct report's onboarding even when the task was assigned to a different person.
+**Symptom.** An HR Admin could ask Smart Query for open requests associated with a named employee, but the deterministic fallback returned the count for the broader request set because it did not apply a person filter.
 
-**Investigation.** The first hypothesis was that the task owner was not being checked. Comparing the status-update guard with the saved `ownerId` confirmed that the previous API rule treated the employee's `managerId` relationship as sufficient task permission. The reporting relationship, rather than task ownership, was the decisive condition.
+**Investigation.** The first hypothesis was that query planning recognized the request intent but dropped the person's name. I checked the deterministic fallback's Prisma `where` construction against the supported question: it applied category, priority, status, and country filters, but had no requester or assignee name condition. That isolated the defect to query construction and showed it would persist whenever the fallback ran, regardless of the LLM planner's output.
 
-**Root cause.** Reporting scope is appropriate for monitoring a plan, but it was incorrectly reused as execution permission.
+**Root cause.** The fallback recognized request intent and some structured filters but did not ground a person mentioned in natural language against the shared user directory. Treating a successful database response as a successful answer hid the missing constraint.
 
-**Fix.** Task status changes now require the task owner. HR Admin may reopen a completed task only with a note; Manager status alone does not grant execution rights.
+**Fix.** Added `findMentionedPerson` to normalize the question, match full or uniquely identifying name tokens against directory records, and include a resolved name in the fixed Prisma filters. The optional LLM can classify a question or phrase the result, but it never constructs or executes SQL.
 
 ```ts
-if (task.ownerId === actor.id) return true;
-return actor.role === "HR_ADMIN" && task.status === "COMPLETED" &&
-  nextStatus === "IN_PROGRESS" && Boolean(note?.trim());
+const mentionedPerson = await findMentionedPerson(question);
+const filters = [
+  ...(status ? [{ status }] : []),
+  ...(country ? [{ requester: { country } }] : []),
+  ...(mentionedPerson ? [{ OR: [
+    { requester: { fullName: { contains: normalizeSearchText(mentionedPerson) } } },
+    { assignee: { fullName: { contains: normalizeSearchText(mentionedPerson) } } },
+  ] }] : []),
+];
 ```
 
-**Prevention.** `src/lib/domains/request-state.test.ts` covers owner-only task execution and audited HR reopening. Keep monitoring visibility and write permission as separate checks when changing onboarding scope.
+**Prevention.** Add integration coverage for exact names, ambiguous partial names, requester versus assignee matches, and both Groq-enabled and deterministic-fallback paths. Assert the returned records and provenance against known database rows; a fluent model answer alone is not evidence that the query applied every requested filter.
 
 ## 3. Running the assessment seed could erase existing data
 
