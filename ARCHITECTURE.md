@@ -21,7 +21,7 @@ Next Ventures is a modular monolith. The browser renders a React client workspac
 
 ```mermaid
 flowchart LR
-  U[Browser: React workspace] -->|HTTP, session cookie| N[Next.js App Router on Vercel]
+  U[Browser: React workspace] -->|HTTP, session cookie| N[Next.js App Router on Render; Vercel fallback]
   U -->|JSON, same-origin API| A[Route Handlers]
   N --> A
   A --> S[Session and RBAC checks]
@@ -43,9 +43,9 @@ flowchart LR
   Q -->|SQL planning and answer formatting| G[Groq API]
 ```
 
-The service request and onboarding modules use the same `User` identity, reporting line, roles, and session. The unified dashboard shows headcount by country, open request counts by status and category (including a chart), onboarding progress and overdue work, plus a cross-module list of active onboarding hires with open IT equipment requests. Smart Query is a read-only HR Admin feature. Groq first converts the question into SQL; server-side validation checks that it is one bounded `SELECT`/`WITH` query over allowlisted HR tables and safe functions. Prisma executes the accepted SQL against the current database (PostgreSQL in Vercel; SQLite locally). Groq then formats the answer using only the returned rows, which are also shown in the UI with provenance. If either Groq call fails, the API returns an error; it does not produce an offline answer.
+The service request and onboarding modules use the same `User` identity, reporting line, roles, and session. The unified dashboard shows headcount by country, open request counts by status and category (including a chart), onboarding progress and overdue work, plus a cross-module list of active onboarding hires with open IT equipment requests. Smart Query is a read-only HR Admin feature. Groq first converts the question into SQL; server-side validation checks that it is one bounded `SELECT`/`WITH` query over allowlisted HR tables and safe functions. Prisma executes the accepted SQL against the current database (PostgreSQL on the hosted deployments; SQLite locally). Groq then formats the answer using only the returned rows, which are also shown in the UI with provenance. If either Groq call fails, the API returns an error; it does not produce an offline answer.
 
-Local development uses SQLite. The deployed application runs on Vercel and connects through Prisma to Supabase PostgreSQL using the PostgreSQL schema and migration in `prisma/postgres/`. The hosted migration and assessment seed have been applied; `npm run verify:seed:postgres` verified 109 accounts, 36 service requests, and 7 onboarding plans. The local SQLite file is separate and is not copied to Supabase.
+Local development uses SQLite. The current primary deployment runs on Render, with the earlier Vercel deployment retained as a fallback. Both hosted deployments connect through Prisma to Supabase PostgreSQL using the PostgreSQL schema and migration in `prisma/postgres/`. The original Vercel deployment went live on November 8 and worked through November 9; a temporary free-tier hosting availability issue was noticed on November 11, so the app was redeployed to Render. The hosted migration and assessment seed have been applied; `npm run verify:seed:postgres` verified 109 accounts, 36 service requests, and 7 onboarding plans. The local SQLite file is separate and is not copied to Supabase.
 
 ## 2. Data model
 
@@ -134,7 +134,7 @@ HR Admin alone changes task ownership. An owner must not be inactive and must ma
 
 ## 6. Trade-offs and next steps
 
-1. **SQLite locally, PostgreSQL for the hosted app.** SQLite keeps local setup simple, while Vercel's serverless instances need a shared durable database. The app therefore has provider-specific Prisma schemas and migrations. Supabase PostgreSQL is the deployed database and its assessment seed has been verified. Local SQLite records are intentionally not copied to the hosted database; both environments use generated assessment data.
+1. **SQLite locally, PostgreSQL for the hosted app.** SQLite keeps local setup simple, while hosted app instances need a shared durable database. The app therefore has provider-specific Prisma schemas and migrations. Supabase PostgreSQL is the deployed database and its assessment seed has been verified. Local SQLite records are intentionally not copied to the hosted database; both environments use generated assessment data.
 2. **Validated read-only SQL for Smart Query.** Groq translates each question into one bounded query. The server rejects writes, system-table access, unknown HR tables, unsafe functions, multiple statements, and unbounded results before execution. PostgreSQL queries run in a read-only transaction; the SQL validator also applies to local SQLite. Result rows are capped at 100 for display, while valid aggregate queries can operate over all matching records. Groq formats the answer using only those live rows. Only the Playwright E2E server marker enables the deterministic provider, which reads current records for keyless CI tests; normal environments return an error when Groq is unavailable. The SQL is generated by an LLM, so validation and database permissions are defense in depth rather than a claim that model output is inherently safe.
 3. **Application RBAC instead of database row-level security.** Route Handlers enforce role and record scope consistently for this single application. Database RLS would provide another defense layer, especially for multiple clients, but requires a different connection/auth model. For a larger team, add PostgreSQL RLS policies and an automated permission matrix.
 

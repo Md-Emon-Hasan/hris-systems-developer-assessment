@@ -27,7 +27,7 @@ Next Ventures is an HR operations platform for employee service requests and str
 | Authentication | Argon2id password hashing and HTTP-only sessions |
 | Database | Prisma; SQLite locally and Supabase PostgreSQL in production |
 | AI | Groq API for Smart Query |
-| Hosting | Vercel |
+| Hosting | Render (primary), Vercel (fallback) |
 | Quality tools | Vitest, Playwright, ESLint, TypeScript |
 
 ## Project file structure
@@ -52,9 +52,12 @@ Next Ventures is an HR operations platform for employee service requests and str
 ## Assessment submission status
 
 - **Source repository:** [GitHub](https://github.com/Md-Emon-Hasan/hris-systems-developer-assessment)
-- **Live platform URL:** [https://hris-systems-developer-assessment.vercel.app](https://hris-systems-developer-assessment.vercel.app)
-- **Hosting and database:** Vercel with Supabase PostgreSQL. The PostgreSQL migration and assessment seed have been applied and verified.
+- **Primary live platform:** [https://hris-systems-developer-assessment.onrender.com](https://hris-systems-developer-assessment.onrender.com)
+- **Backup live platform:** [https://hris-systems-developer-assessment.vercel.app](https://hris-systems-developer-assessment.vercel.app) (try this if the Render URL is unavailable)
+- **Hosting and database:** Render is the current primary host, with Vercel retained as a fallback; both use Supabase PostgreSQL. The PostgreSQL migration and assessment seed have been applied and verified.
 - **Seed verification:** 109 accounts (100 Employees, 8 Managers, 1 HR Admin), 36 requests, and 7 onboarding plans; `npm run verify:seed:postgres` passes against the hosted database.
+
+> **Deployment note:** The original Vercel deployment went live on November 8 and worked through November 9. After a temporary free-tier hosting availability issue was noticed on November 11, the app was redeployed to Render. Please try Render first; the Vercel deployment remains available as a fallback.
 
 > **Live demo note:** The app uses free-tier hosting and database services, so database writes may take a few seconds. After clicking an action, please wait briefly for it to finish.
 
@@ -103,7 +106,7 @@ Request and task transitions are validated by the server and recorded in history
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | Local SQLite URL; the deployed Vercel app uses the Supabase PostgreSQL transaction-pooler URL. |
+| `DATABASE_URL` | Local SQLite URL; the deployed app uses the Supabase PostgreSQL transaction-pooler URL. |
 | `DIRECT_URL` | Supabase direct/session-pooler URL used by Prisma migrations. |
 | `GROQ_API_KEY` | Required server-side key for translating questions into live SQL queries and formatting answers. The Playwright E2E server intentionally omits it and uses a deterministic live-record test provider. |
 | `GROQ_MODEL` | Optional Groq model ID; defaults to `openai/gpt-oss-20b`. |
@@ -111,11 +114,11 @@ Request and task transitions are validated by the server and recorded in history
 
 Keep real database credentials and AI keys in local or host-managed environment settings. Never commit active secrets or expose them through a `NEXT_PUBLIC_` variable.
 
-## Supabase and Vercel deployment
+## Supabase and hosting deployment
 
-The app is live at [hris-systems-developer-assessment.vercel.app](https://hris-systems-developer-assessment.vercel.app). Vercel builds with `npm run build:postgres` and deploys production-branch pushes; other branches create Preview deployments. The hosted Supabase PostgreSQL seed is verified with `npm run verify:seed:postgres`.
+The primary app is hosted at [hris-systems-developer-assessment.onrender.com](https://hris-systems-developer-assessment.onrender.com). If it is unavailable, use the [Vercel fallback](https://hris-systems-developer-assessment.vercel.app). The Vercel deployment was the original host; after a temporary free-tier availability issue was noticed on November 11, the app was redeployed to Render. Both deployments connect to the hosted Supabase PostgreSQL database. The database seed is verified with `npm run verify:seed:postgres`.
 
-Local SQLite and hosted PostgreSQL are separate databases. Apply PostgreSQL schema changes with `npm run db:migrate:postgres` before deploying dependent code; do not run the setup seed against live data. Configure `DATABASE_URL` with the Supabase transaction-pooler URL, `DIRECT_URL` with a direct or session-pooler URL, and `GROQ_API_KEY` server-side. Use a separate Supabase project for Preview when it must be isolated from assessment data.
+Local SQLite and hosted PostgreSQL are separate databases. Apply PostgreSQL schema changes with `npm run db:migrate:postgres` before deploying dependent code; do not run the setup seed against live data. Configure `DATABASE_URL` with the Supabase transaction-pooler URL, `DIRECT_URL` with a direct or session-pooler URL, and `GROQ_API_KEY` server-side. Keep a separate Supabase project for any preview deployment that must be isolated from assessment data.
 
 ## Further documentation
 
